@@ -1,0 +1,315 @@
+import SwiftUI
+
+/// Sidebar schema tree: Server > Databases > Tablolar/View'lar > table >
+/// Kolonlar/İndeksler. Every level below "Databases" loads lazily, only
+/// when that specific row is first expanded. Stored procedures/functions/
+/// triggers/events are a later phase — their content (source) needs the
+/// SQL editor to be worth showing at all.
+///
+/// Built on a plain `ScrollView`/`LazyVStack`, not `List`/`DisclosureGroup`:
+/// SwiftUI's native `DisclosureGroup` bakes in enough row padding that
+/// `.listRowInsets`/`defaultMinListRowHeight` can't shrink it below a fairly
+/// tall row, which read as "still too spaced out" — this gives pixel-level
+/// control over row height/indent instead.
+struct TableListView: View {
+    @ObservedObject var viewModel: SchemaTreeViewModel
+    @Binding var selectedTable: TableInfo?
+
+    var body: some View {
+        Group {
+            if viewModel.isLoading && viewModel.databaseNodes.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let errorMessage = viewModel.errorMessage {
+                Text(errorMessage)
+                    .foregroundStyle(.red)
+                    .padding()
+            } else if viewModel.databaseNodes.isEmpty {
+                Text("Veritabanı bulunamadı.")
+                    .foregroundStyle(.secondary)
+                    .padding()
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(viewModel.databaseNodes) { node in
+                            DatabaseRow(node: node, selectedTable: $selectedTable)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    Task { await viewModel.loadDatabases() }
+                } label: {
+                    Label("Yenile", systemImage: "arrow.clockwise")
+                }
+            }
+        }
+    }
+}
+
+/// Shared row chrome: an optional chevron (tap toggles expansion), an icon,
+/// a title, and optional trailing text — all at a fixed, compact height.
+/// The chevron and the rest of the row have independent tap targets, so
+/// clicking a table's label selects it without also having to expand it.
+private struct RowHeader: View {
+    let title: String
+    let systemImage: String
+    let iconColor: Color
+    let indent: CGFloat
+    let isExpandable: Bool
+    let isExpanded: Bool
+    var trailing: String? = nil
+    var isSelected: Bool = false
+    var onToggle: (() -> Void)? = nil
+    var onSelect: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Group {
+                if isExpandable {
+                    Image(systemName: "chevron.right")
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .contentShape(Rectangle())
+                        .onTapGesture { onToggle?() }
+                } else {
+                    Color.clear
+                }
+            }
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: 12, height: 16)
+
+            Image(systemName: systemImage)
+                .font(.system(size: 13))
+                .foregroundStyle(iconColor)
+                .frame(width: 16)
+
+            Text(title)
+                .font(.system(size: 13))
+                .lineLimit(1)
+
+            Spacer(minLength: 4)
+
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 12))
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.8) : .secondary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.leading, indent)
+        .padding(.trailing, 8)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect?() }
+    }
+}
+
+/// A fixed schema category (Tablolar, View'lar, Kolonlar, İndeksler) whose
+/// items load lazily on first expansion.
+private struct CategoryRow<Item: Identifiable, RowContent: View>: View {
+    let title: String
+    let systemImage: String
+    let indent: CGFloat
+    let items: [Item]
+    let isLoading: Bool
+    let isLoaded: Bool
+    let errorMessage: String?
+    let emptyText: String
+    let onExpand: () -> Void
+    @ViewBuilder let rowContent: (Item) -> RowContent
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RowHeader(
+                title: title,
+                systemImage: systemImage,
+                iconColor: .secondary,
+                indent: indent,
+                isExpandable: true,
+                isExpanded: isExpanded,
+                onToggle: toggle,
+                onSelect: toggle
+            )
+
+            if isExpanded {
+                if isLoading {
+                    placeholder("Yükleniyor…")
+                } else if let errorMessage {
+                    placeholder(errorMessage, color: .red)
+                } else if isLoaded && items.isEmpty {
+                    placeholder(emptyText)
+                } else {
+                    ForEach(items) { item in
+                        rowContent(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private func toggle() {
+        withAnimation(.easeInOut(duration: 0.12)) { isExpanded.toggle() }
+        if isExpanded { onExpand() }
+    }
+
+    private func placeholder(_ text: String, color: Color = .secondary) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(color)
+            .padding(.leading, indent + 26)
+            .padding(.vertical, 2)
+    }
+}
+
+private struct DatabaseRow: View {
+    @ObservedObject var node: DatabaseNode
+    @Binding var selectedTable: TableInfo?
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RowHeader(
+                title: node.info.name,
+                systemImage: "cylinder.split.1x2",
+                iconColor: .secondary,
+                indent: 0,
+                isExpandable: true,
+                isExpanded: isExpanded,
+                onToggle: toggle,
+                onSelect: toggle
+            )
+
+            if isExpanded {
+                CategoryRow(
+                    title: "Tablolar",
+                    systemImage: "tablecells",
+                    indent: 14,
+                    items: node.baseTableNodes,
+                    isLoading: node.isLoading,
+                    isLoaded: node.isLoaded,
+                    errorMessage: node.errorMessage,
+                    emptyText: "Tablo yok",
+                    onExpand: { Task { await node.loadIfNeeded() } }
+                ) { tableNode in
+                    TableTreeRow(node: tableNode, selectedTable: $selectedTable, indent: 28)
+                }
+
+                CategoryRow(
+                    title: "View'lar",
+                    systemImage: "eye",
+                    indent: 14,
+                    items: node.viewNodes,
+                    isLoading: node.isLoading,
+                    isLoaded: node.isLoaded,
+                    errorMessage: node.errorMessage,
+                    emptyText: "View yok",
+                    onExpand: { Task { await node.loadIfNeeded() } }
+                ) { tableNode in
+                    TableTreeRow(node: tableNode, selectedTable: $selectedTable, indent: 28)
+                }
+            }
+        }
+    }
+
+    private func toggle() {
+        withAnimation(.easeInOut(duration: 0.12)) { isExpanded.toggle() }
+    }
+}
+
+private struct TableTreeRow: View {
+    @ObservedObject var node: TableNode
+    @Binding var selectedTable: TableInfo?
+    let indent: CGFloat
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RowHeader(
+                title: node.info.name,
+                systemImage: node.info.isView ? "eye" : "tablecells",
+                iconColor: .secondary,
+                indent: indent,
+                isExpandable: true,
+                isExpanded: isExpanded,
+                isSelected: selectedTable?.id == node.info.id,
+                onToggle: { withAnimation(.easeInOut(duration: 0.12)) { isExpanded.toggle() } },
+                onSelect: { selectedTable = node.info }
+            )
+
+            if isExpanded {
+                CategoryRow(
+                    title: "Kolonlar",
+                    systemImage: "list.bullet",
+                    indent: indent + 14,
+                    items: node.columns,
+                    isLoading: node.isLoadingColumns,
+                    isLoaded: node.isColumnsLoaded,
+                    errorMessage: node.columnsErrorMessage,
+                    emptyText: "Kolon yok",
+                    onExpand: { Task { await node.loadColumnsIfNeeded() } }
+                ) { column in
+                    ColumnRow(column: column, indent: indent + 28)
+                }
+
+                CategoryRow(
+                    title: "İndeksler",
+                    systemImage: "arrow.up.arrow.down",
+                    indent: indent + 14,
+                    items: node.indexes,
+                    isLoading: node.isLoadingIndexes,
+                    isLoaded: node.isIndexesLoaded,
+                    errorMessage: node.indexesErrorMessage,
+                    emptyText: "İndeks yok",
+                    onExpand: { Task { await node.loadIndexesIfNeeded() } }
+                ) { index in
+                    IndexRow(index: index, indent: indent + 28)
+                }
+            }
+        }
+    }
+}
+
+private struct ColumnRow: View {
+    let column: ColumnInfo
+    let indent: CGFloat
+
+    var body: some View {
+        RowHeader(
+            title: column.name,
+            systemImage: column.isPrimaryKey ? "key.fill" : "minus",
+            iconColor: column.isPrimaryKey ? .orange : .secondary,
+            indent: indent,
+            isExpandable: false,
+            isExpanded: false,
+            trailing: column.mysqlType
+        )
+    }
+}
+
+private struct IndexRow: View {
+    let index: IndexInfo
+    let indent: CGFloat
+
+    var body: some View {
+        RowHeader(
+            title: index.name,
+            systemImage: index.isUnique ? "checkmark.seal" : "number",
+            iconColor: .secondary,
+            indent: indent,
+            isExpandable: false,
+            isExpanded: false,
+            trailing: index.columns.joined(separator: ", ")
+        )
+    }
+}

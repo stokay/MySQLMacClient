@@ -1,0 +1,108 @@
+import Foundation
+import MySQLNIO
+
+/// Reads database/table/column/key metadata via `SHOW` statements. MySQL has
+/// no parameterized-identifier support, so identifiers are never bound as
+/// `?` params — they're validated then backtick-escaped instead.
+struct SchemaIntrospectionService {
+    let service: MySQLService
+
+    func listDatabases() async throws -> [DatabaseInfo] {
+        let rows = try await service.query("SHOW DATABASES")
+        return rows.compactMap { row in
+            guard let columnName = row.columnDefinitions.first?.name,
+                  let name = row.column(columnName)?.string else {
+                return nil
+            }
+            return DatabaseInfo(name: name)
+        }
+    }
+
+    /// `SHOW FULL TABLES` distinguishes base tables from views in one query
+    /// instead of two — the first column's label varies (`Tables_in_<db>`),
+    /// so it's read positionally like `SHOW TABLES`/`SHOW DATABASES`.
+    func listTablesAndViews(inDatabase database: String) async throws -> [TableInfo] {
+        let quotedDatabase = try Self.quotedIdentifier(database)
+        let rows = try await service.query("SHOW FULL TABLES FROM \(quotedDatabase)")
+        return rows.compactMap { row -> TableInfo? in
+            guard let nameColumn = row.columnDefinitions.first?.name,
+                  let name = row.column(nameColumn)?.string else {
+                return nil
+            }
+            let isView = row.column("Table_type")?.string == "VIEW"
+            return TableInfo(database: database, name: name, isView: isView)
+        }
+    }
+
+    func columns(forTable table: String, inDatabase database: String) async throws -> [ColumnInfo] {
+        let qualifiedTable = try Self.qualifiedIdentifier(database: database, name: table)
+        let primaryKeyColumns = Set(try await primaryKeyColumnNames(forTable: table, inDatabase: database))
+        let rows = try await service.query("SHOW COLUMNS FROM \(qualifiedTable)")
+        return rows.compactMap { row -> ColumnInfo? in
+            guard let name = row.column("Field")?.string else { return nil }
+            let type = row.column("Type")?.string ?? ""
+            let isNullable = (row.column("Null")?.string ?? "NO") == "YES"
+            let extra = row.column("Extra")?.string ?? ""
+            return ColumnInfo(
+                name: name,
+                mysqlType: type,
+                isNullable: isNullable,
+                isPrimaryKey: primaryKeyColumns.contains(name),
+                isAutoIncrement: extra.localizedCaseInsensitiveContains("auto_increment"),
+                defaultValue: row.column("Default")?.string
+            )
+        }
+    }
+
+    /// Composite-key aware: returns every column that's part of the PRIMARY KEY.
+    func primaryKeyColumnNames(forTable table: String, inDatabase database: String) async throws -> [String] {
+        let qualifiedTable = try Self.qualifiedIdentifier(database: database, name: table)
+        let rows = try await service.query("SHOW KEYS FROM \(qualifiedTable) WHERE Key_name = 'PRIMARY'")
+        return rows.compactMap { $0.column("Column_name")?.string }
+    }
+
+    /// Groups `SHOW INDEX` rows (one row per indexed column) into one
+    /// `IndexInfo` per `Key_name`, columns ordered by `Seq_in_index`.
+    func indexes(forTable table: String, inDatabase database: String) async throws -> [IndexInfo] {
+        let qualifiedTable = try Self.qualifiedIdentifier(database: database, name: table)
+        let rows = try await service.query("SHOW INDEX FROM \(qualifiedTable)")
+
+        var order: [String] = []
+        var columnsByKey: [String: [(seq: Int, column: String)]] = [:]
+        var metaByKey: [String: (isUnique: Bool, indexType: String)] = [:]
+
+        for row in rows {
+            guard let keyName = row.column("Key_name")?.string,
+                  let columnName = row.column("Column_name")?.string else { continue }
+            if columnsByKey[keyName] == nil {
+                order.append(keyName)
+                columnsByKey[keyName] = []
+                let nonUnique = row.column("Non_unique")?.int ?? 1
+                metaByKey[keyName] = (isUnique: nonUnique == 0, indexType: row.column("Index_type")?.string ?? "")
+            }
+            let seq = row.column("Seq_in_index")?.int ?? 0
+            columnsByKey[keyName]?.append((seq, columnName))
+        }
+
+        return order.compactMap { keyName in
+            guard let meta = metaByKey[keyName], let cols = columnsByKey[keyName] else { return nil }
+            let orderedColumns = cols.sorted { $0.seq < $1.seq }.map(\.column)
+            return IndexInfo(name: keyName, columns: orderedColumns, isUnique: meta.isUnique, indexType: meta.indexType)
+        }
+    }
+
+    /// Backtick-escapes a single identifier. Only ever call this with names
+    /// that came from `SHOW DATABASES`/`SHOW TABLES`/`SHOW COLUMNS`, never
+    /// raw user input.
+    static func quotedIdentifier(_ raw: String) throws -> String {
+        guard !raw.isEmpty, !raw.contains("`") else {
+            throw MySQLServiceError.invalidIdentifier(raw)
+        }
+        return "`\(raw)`"
+    }
+
+    /// `` `database`.`table` `` — both parts individually validated/escaped.
+    static func qualifiedIdentifier(database: String, name: String) throws -> String {
+        "\(try quotedIdentifier(database)).\(try quotedIdentifier(name))"
+    }
+}
