@@ -3,19 +3,32 @@ import SwiftUI
 struct PaginationControlView: View {
     @ObservedObject var viewModel: TableDataViewModel
 
-    @State private var pageSizeText: String = "1000"
     @State private var filterColumnSelection: String = ""
     @State private var filterText: String = ""
+
+    /// Bound straight to `viewModel.pageSize` (not a separate local draft
+    /// string) so a value typed here is already current the moment
+    /// "Yenile" — which lives in the sibling grid toolbar and has no way to
+    /// see this view's own local state — is clicked, with no Enter/onSubmit
+    /// required first.
+    private var pageSizeBinding: Binding<String> {
+        Binding(
+            get: { String(viewModel.pageSize) },
+            set: { newValue in
+                if let value = Int(newValue), value > 0 {
+                    viewModel.pageSize = value
+                }
+            }
+        )
+    }
 
     var body: some View {
         HStack(spacing: 12) {
             Text("Sayfa boyutu:")
-            TextField("", text: $pageSizeText)
+            TextField("", text: pageSizeBinding)
                 .frame(width: 60)
                 .onSubmit {
-                    if let value = Int(pageSizeText) {
-                        Task { await viewModel.changePageSize(value) }
-                    }
+                    Task { await viewModel.reload() }
                 }
 
             Divider().frame(height: 16)
@@ -71,9 +84,6 @@ struct PaginationControlView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .onAppear { pageSizeText = String(viewModel.pageSize) }
     }
 
     private var rangeDescription: String {

@@ -14,6 +14,7 @@ import SwiftUI
 struct TableListView: View {
     @ObservedObject var viewModel: SchemaTreeViewModel
     @Binding var selectedTable: TableInfo?
+    let insertionBridge: SQLInsertionBridge
 
     var body: some View {
         Group {
@@ -32,7 +33,7 @@ struct TableListView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(viewModel.databaseNodes) { node in
-                            DatabaseRow(node: node, selectedTable: $selectedTable)
+                            DatabaseRow(node: node, selectedTable: $selectedTable, insertionBridge: insertionBridge)
                         }
                     }
                     .padding(.vertical, 4)
@@ -66,6 +67,7 @@ private struct RowHeader: View {
     var isSelected: Bool = false
     var onToggle: (() -> Void)? = nil
     var onSelect: (() -> Void)? = nil
+    var onDoubleClick: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 5) {
@@ -109,6 +111,7 @@ private struct RowHeader: View {
         .foregroundStyle(isSelected ? Color.white : Color.primary)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { onDoubleClick?() }
         .onTapGesture { onSelect?() }
     }
 }
@@ -175,6 +178,7 @@ private struct CategoryRow<Item: Identifiable, RowContent: View>: View {
 private struct DatabaseRow: View {
     @ObservedObject var node: DatabaseNode
     @Binding var selectedTable: TableInfo?
+    let insertionBridge: SQLInsertionBridge
     @State private var isExpanded = false
 
     var body: some View {
@@ -202,7 +206,7 @@ private struct DatabaseRow: View {
                     emptyText: "Tablo yok",
                     onExpand: { Task { await node.loadIfNeeded() } }
                 ) { tableNode in
-                    TableTreeRow(node: tableNode, selectedTable: $selectedTable, indent: 28)
+                    TableTreeRow(node: tableNode, selectedTable: $selectedTable, indent: 28, insertionBridge: insertionBridge)
                 }
 
                 CategoryRow(
@@ -216,7 +220,7 @@ private struct DatabaseRow: View {
                     emptyText: "View yok",
                     onExpand: { Task { await node.loadIfNeeded() } }
                 ) { tableNode in
-                    TableTreeRow(node: tableNode, selectedTable: $selectedTable, indent: 28)
+                    TableTreeRow(node: tableNode, selectedTable: $selectedTable, indent: 28, insertionBridge: insertionBridge)
                 }
             }
         }
@@ -231,6 +235,7 @@ private struct TableTreeRow: View {
     @ObservedObject var node: TableNode
     @Binding var selectedTable: TableInfo?
     let indent: CGFloat
+    let insertionBridge: SQLInsertionBridge
     @State private var isExpanded = false
 
     var body: some View {
@@ -244,7 +249,10 @@ private struct TableTreeRow: View {
                 isExpanded: isExpanded,
                 isSelected: selectedTable?.id == node.info.id,
                 onToggle: { withAnimation(.easeInOut(duration: 0.12)) { isExpanded.toggle() } },
-                onSelect: { selectedTable = node.info }
+                onSelect: { selectedTable = node.info },
+                onDoubleClick: {
+                    insertionBridge.pendingText = "`\(node.info.database)`.`\(node.info.name)`"
+                }
             )
 
             if isExpanded {
@@ -259,7 +267,7 @@ private struct TableTreeRow: View {
                     emptyText: "Kolon yok",
                     onExpand: { Task { await node.loadColumnsIfNeeded() } }
                 ) { column in
-                    ColumnRow(column: column, indent: indent + 28)
+                    ColumnRow(column: column, indent: indent + 28, tableInfo: node.info, selectedTable: $selectedTable, insertionBridge: insertionBridge)
                 }
 
                 CategoryRow(
@@ -283,6 +291,9 @@ private struct TableTreeRow: View {
 private struct ColumnRow: View {
     let column: ColumnInfo
     let indent: CGFloat
+    let tableInfo: TableInfo
+    @Binding var selectedTable: TableInfo?
+    let insertionBridge: SQLInsertionBridge
 
     var body: some View {
         RowHeader(
@@ -292,7 +303,16 @@ private struct ColumnRow: View {
             indent: indent,
             isExpandable: false,
             isExpanded: false,
-            trailing: column.mysqlType
+            trailing: column.mysqlType,
+            onDoubleClick: {
+                // Guarantees the query panel's `TableDataGridView` actually
+                // exists to receive `insertionBridge.pendingText` — without
+                // this, double-clicking a column under a table that was
+                // never selected (only expanded) set the bridge and nothing
+                // was there to consume it.
+                selectedTable = tableInfo
+                insertionBridge.pendingText = "`\(column.name)`"
+            }
         )
     }
 }

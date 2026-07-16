@@ -20,6 +20,10 @@ struct ConnectionFormView: View {
                 .frame(minWidth: 380, maxWidth: .infinity)
         }
         .frame(minWidth: 640, minHeight: 480)
+        .overlay(alignment: .topTrailing) {
+            AppearancePickerView()
+                .padding(12)
+        }
     }
 
     private var savedConnectionsList: some View {

@@ -5,6 +5,7 @@ struct MainWindowView: View {
     let onDisconnect: () -> Void
 
     @StateObject private var schemaTreeViewModel: SchemaTreeViewModel
+    @StateObject private var insertionBridge = SQLInsertionBridge()
     @State private var selectedTable: TableInfo?
 
     init(session: AppSession, onDisconnect: @escaping () -> Void) {
@@ -18,7 +19,7 @@ struct MainWindowView: View {
     var body: some View {
         VStack(spacing: 0) {
             NavigationSplitView {
-                TableListView(viewModel: schemaTreeViewModel, selectedTable: $selectedTable)
+                TableListView(viewModel: schemaTreeViewModel, selectedTable: $selectedTable, insertionBridge: insertionBridge)
                     .navigationSplitViewColumnWidth(min: 200, ideal: 260)
             } detail: {
                 if let selectedTable {
@@ -26,7 +27,8 @@ struct MainWindowView: View {
                         databaseName: selectedTable.database,
                         tableName: selectedTable.name,
                         service: session.mysqlService,
-                        introspection: session.introspectionService
+                        introspection: session.introspectionService,
+                        insertionBridge: insertionBridge
                     )
                     .id(selectedTable.id)
                 } else {

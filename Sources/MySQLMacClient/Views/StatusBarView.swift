@@ -13,6 +13,7 @@ struct StatusBarView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
+            AppearancePickerView()
             Button("Bağlantıyı Kes", action: onDisconnect)
                 .font(.caption)
                 .buttonStyle(.plain)

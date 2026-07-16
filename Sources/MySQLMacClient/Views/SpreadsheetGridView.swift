@@ -10,77 +10,8 @@ import AppKit
 /// `NSTableView` gives direct control over `intercellSpacing` and
 /// `gridStyleMask`, so the header separators and the grid lines are drawn
 /// by the same AppKit geometry instead of two independently-guessed ones.
-/// Draws a flat custom background instead of the system header bezel, so
-/// the header can use an app-chosen color pair instead of the system's.
-private final class ColoredHeaderCell: NSTableHeaderCell {
-    static let backgroundColor = NSColor(red: 0x3c / 255, green: 0x3c / 255, blue: 0x3c / 255, alpha: 1)
-    static let textColor = NSColor(red: 0xc5 / 255, green: 0xc5 / 255, blue: 0xc5 / 255, alpha: 1)
-    static let separatorColor = NSColor(red: 0xcd / 255, green: 0xcd / 255, blue: 0xcd / 255, alpha: 1)
-
-    /// Fully replacing `draw(withFrame:in:)` (for the custom background)
-    /// also threw out AppKit's own between-header-cells separator, so it's
-    /// redrawn by hand on the trailing edge.
-    override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
-        Self.backgroundColor.setFill()
-        cellFrame.fill()
-        drawInterior(withFrame: cellFrame, in: controlView)
-
-        Self.separatorColor.setFill()
-        NSRect(x: cellFrame.maxX - 1, y: cellFrame.minY, width: 1, height: cellFrame.height).fill()
-    }
-
-    /// Fully custom (no `super` call) so the title is vertically centered —
-    /// the default header cell draws it flush to the top of the frame.
-    override func drawInterior(withFrame cellFrame: NSRect, in controlView: NSView) {
-        let title = attributedStringValue
-        let size = title.size()
-        let textRect = NSRect(
-            x: cellFrame.origin.x + 4,
-            y: cellFrame.origin.y + (cellFrame.height - size.height) / 2,
-            width: max(0, cellFrame.width - 8),
-            height: size.height
-        )
-        title.draw(in: textRect)
-    }
-}
-
-/// Draws the selected row's background in an app-chosen flat color instead
-/// of the system's blue/gray selection highlight, and recolors its own
-/// cells' text the instant `isSelected` changes.
-///
-/// Recoloring used to happen from `tableViewSelectionDidChange`, a
-/// notification that fires *after* AppKit has already flipped the row to
-/// its selected background — that gap between "background is now selected"
-/// and "our delegate gets around to recoloring the text" was the flash.
-/// Overriding `isSelected` here does both in the same synchronous step,
-/// before any redraw happens.
-private final class SelectedColorRowView: NSTableRowView {
-    static let selectedBackgroundColor = NSColor(red: 0xdc / 255, green: 0xdc / 255, blue: 0xdc / 255, alpha: 1)
-    static let selectedTextColor = NSColor(red: 0x22 / 255, green: 0x1a / 255, blue: 0x14 / 255, alpha: 1)
-
-    override var isSelected: Bool {
-        didSet {
-            guard isSelected != oldValue else { return }
-            recolorTextFields()
-        }
-    }
-
-    override func drawSelection(in dirtyRect: NSRect) {
-        Self.selectedBackgroundColor.setFill()
-        bounds.fill()
-    }
-
-    private func recolorTextFields() {
-        for cellContainer in subviews {
-            for subview in cellContainer.subviews {
-                guard let textField = subview as? NSTextField else { continue }
-                (textField.cell as? NSTextFieldCell)?.backgroundStyle = .normal
-                textField.textColor = isSelected ? Self.selectedTextColor : .labelColor
-            }
-        }
-    }
-}
-
+/// Shared header/selection styling lives in `GridStyling.swift` — the SQL
+/// query results grid (`QueryResultGridView`) reuses the same look.
 struct SpreadsheetGridView: NSViewRepresentable {
     @ObservedObject var viewModel: TableDataViewModel
 
@@ -89,7 +20,7 @@ struct SpreadsheetGridView: NSViewRepresentable {
         tableView.style = .plain
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
-        tableView.gridColor = ColoredHeaderCell.textColor
+        tableView.gridColor = .gridLineColor
         tableView.intercellSpacing = NSSize(width: 1, height: 1)
         tableView.rowHeight = 20
         tableView.headerView = NSTableHeaderView()
@@ -112,6 +43,7 @@ struct SpreadsheetGridView: NSViewRepresentable {
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.viewModel = viewModel
         context.coordinator.rebuildColumnsIfNeeded()
+        context.coordinator.refreshHeaderTitles()
         context.coordinator.tableView?.reloadData()
     }
 
@@ -155,19 +87,42 @@ struct SpreadsheetGridView: NSViewRepresentable {
             for column in viewModel.columns {
                 let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(column.name))
                 let headerCell = ColoredHeaderCell()
-                let title = column.isPrimaryKey ? "🔑 \(column.name)" : column.name
-                headerCell.attributedStringValue = NSAttributedString(
-                    string: title,
-                    attributes: [
-                        .font: NSFont.boldSystemFont(ofSize: 15),
-                        .foregroundColor: ColoredHeaderCell.textColor,
-                    ]
-                )
+                headerCell.attributedStringValue = headerTitle(for: column)
                 tableColumn.headerCell = headerCell
+                tableColumn.sortDescriptorPrototype = NSSortDescriptor(key: column.name, ascending: true)
                 tableColumn.width = 140
                 tableColumn.minWidth = 60
                 tableView.addTableColumn(tableColumn)
             }
+        }
+
+        /// Re-applies each data column's header title/sort-arrow without
+        /// touching the column structure itself — cheap enough to run on
+        /// every `updateNSView`, unlike `rebuildColumns()`.
+        func refreshHeaderTitles() {
+            guard let tableView else { return }
+            for tableColumn in tableView.tableColumns where tableColumn.identifier != Self.deleteColumnID {
+                guard let headerCell = tableColumn.headerCell as? ColoredHeaderCell,
+                      let column = viewModel.columns.first(where: { $0.name == tableColumn.identifier.rawValue }) else { continue }
+                headerCell.attributedStringValue = headerTitle(for: column)
+            }
+        }
+
+        private func headerTitle(for column: ColumnInfo) -> NSAttributedString {
+            var title = column.isPrimaryKey ? "🔑 \(column.name)" : column.name
+            if viewModel.sortColumn == column.name {
+                title += viewModel.sortAscending ? " ▲" : " ▼"
+            }
+            return ColoredHeaderCell.title(title)
+        }
+
+        /// Fires when a header is clicked — AppKit itself flips the
+        /// descriptor's `ascending` for a re-click on the same column, and
+        /// resets to ascending for a newly-clicked different column, so we
+        /// just read off whatever it decided and hand it to the view model.
+        func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+            guard let descriptor = tableView.sortDescriptors.first, let key = descriptor.key else { return }
+            Task { await viewModel.applySort(column: key, ascending: descriptor.ascending) }
         }
 
         func numberOfRows(in tableView: NSTableView) -> Int {
@@ -176,17 +131,6 @@ struct SpreadsheetGridView: NSViewRepresentable {
 
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
             SelectedColorRowView()
-        }
-
-        /// A row's `backgroundStyle` normally flips to `.emphasized` on
-        /// selection, which makes an `NSTextField` briefly auto-swap to the
-        /// system's own light/selected text color before our explicit
-        /// `textColor` takes over — the "flash" on mouse-click select.
-        /// Forcing `.normal` here makes AppKit skip that auto-adjustment,
-        /// so only our own color ever applies.
-        private func applyTextColor(to textField: NSTextField, isSelected: Bool) {
-            (textField.cell as? NSTextFieldCell)?.backgroundStyle = .normal
-            textField.textColor = isSelected ? SelectedColorRowView.selectedTextColor : .labelColor
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -203,7 +147,7 @@ struct SpreadsheetGridView: NSViewRepresentable {
                 button.bezelStyle = .regularSquare
                 button.tag = row
                 button.isEnabled = viewModel.hasPrimaryKey
-                return wrapInCellView(button, centered: true)
+                return wrapInGridCellView(button, centered: true)
             }
 
             let columnName = tableColumn.identifier.rawValue
@@ -212,33 +156,10 @@ struct SpreadsheetGridView: NSViewRepresentable {
             textField.drawsBackground = false
             textField.isEditable = viewModel.hasPrimaryKey
             textField.font = .systemFont(ofSize: 12)
-            applyTextColor(to: textField, isSelected: tableView.selectedRowIndexes.contains(row))
+            applyGridTextColor(to: textField, isSelected: tableView.selectedRowIndexes.contains(row))
             textField.delegate = self
             textField.identifier = NSUserInterfaceItemIdentifier("\(row)|\(columnName)")
-            return wrapInCellView(textField, centered: false)
-        }
-
-        /// A plain `NSView`, not `NSTableCellView` — `NSTableCellView` has
-        /// its own automatic `backgroundStyle` propagation tied to row
-        /// selection that kept re-asserting itself over our explicit text
-        /// color on the frame the row got selected (the "flash"), even
-        /// after forcing `.normal` on the cell. Nothing here relies on
-        /// `NSTableCellView`'s outlets, so the plain container sidesteps
-        /// that behavior entirely instead of continuing to fight it.
-        private func wrapInCellView(_ subview: NSView, centered: Bool) -> NSView {
-            let cell = NSView()
-            subview.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(subview)
-            NSLayoutConstraint.activate([
-                subview.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                centered
-                    ? subview.centerXAnchor.constraint(equalTo: cell.centerXAnchor)
-                    : subview.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
-            ])
-            if !centered {
-                subview.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4).isActive = true
-            }
-            return cell
+            return wrapInGridCellView(textField, centered: false)
         }
 
         @objc private func deleteTapped(_ sender: NSButton) {

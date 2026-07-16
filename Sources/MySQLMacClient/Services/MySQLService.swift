@@ -12,6 +12,16 @@ struct ExecuteResult: Sendable {
     let lastInsertID: UInt64?
 }
 
+/// Result of an arbitrary, user-authored SQL statement (the query editor):
+/// unlike `query`/`execute`, the caller doesn't know ahead of time whether
+/// it's a SELECT (rows matter) or an INSERT/UPDATE/DDL (affected-row count
+/// matters), so this carries both.
+struct RawQueryResult: Sendable {
+    let rows: [MySQLRow]
+    let affectedRows: UInt64?
+    let lastInsertID: UInt64?
+}
+
 enum MySQLServiceError: Error, LocalizedError {
     case notConnected
     case invalidIdentifier(String)
@@ -103,7 +113,26 @@ actor MySQLService {
                     box.affectedRows = metadata.affectedRows
                     box.lastInsertID = metadata.lastInsertID
                 }).get()
-                return ExecuteResult(affectedRows: box.affectedRows, lastInsertID: box.lastInsertID)
+                return ExecuteResult(affectedRows: box.affectedRows ?? 0, lastInsertID: box.lastInsertID)
+            }
+        }
+    }
+
+    /// For the SQL query editor: runs whatever the user typed as-is. Unlike
+    /// every other query in this app, this is deliberately *not*
+    /// identifier-whitelisted or otherwise sanitized — a raw SQL editor
+    /// exists precisely so the user can run arbitrary SQL, same as
+    /// SQLyog/DBeaver/phpMyAdmin's query tabs. This must never be reachable
+    /// from anything other than that editor's own explicit "run" action.
+    func rawQuery(_ sql: String) async throws -> RawQueryResult {
+        try await withRetryOnClosedConnection {
+            try await self.withExclusiveConnectionAccess { conn in
+                let box = MetadataBox()
+                let rows = try await conn.query(sql, [], onMetadata: { metadata in
+                    box.affectedRows = metadata.affectedRows
+                    box.lastInsertID = metadata.lastInsertID
+                }).get()
+                return RawQueryResult(rows: rows, affectedRows: box.affectedRows, lastInsertID: box.lastInsertID)
             }
         }
     }
@@ -165,7 +194,10 @@ actor MySQLService {
     }
 
     private final class MetadataBox: @unchecked Sendable {
-        var affectedRows: UInt64 = 0
+        // nil (not 0) until `onMetadata` actually fires — a SELECT never
+        // triggers it, so `nil` is how a raw query tells "no affected-row
+        // count" (it was a read) apart from "matched zero rows" (a write).
+        var affectedRows: UInt64?
         var lastInsertID: UInt64?
     }
 }

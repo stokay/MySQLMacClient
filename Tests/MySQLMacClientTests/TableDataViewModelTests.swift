@@ -112,19 +112,40 @@ final class TableDataViewModelTests: XCTestCase {
         XCTAssertEqual(rows.first?.column("cnt")?.int, 1)
     }
 
-    func testInsertBlankRowSurfacesErrorWithoutCorruptingTableWhenColumnIsRequired() async throws {
-        // `widgets.name` is NOT NULL with no default, so a blank insert must
-        // fail loudly (via errorMessage) rather than silently inserting a
-        // half-valid row or crashing — see MySQLClient.md's "no crash, no
-        // silent corruption" requirement.
+    func testInsertBlankRowOnRequiredTextColumnUsesEmptyStringInsteadOfFailing() async throws {
+        // `widgets.name` is NOT NULL with no default. Sending NULL for it
+        // (the old behavior) made every blank insert fail immediately —
+        // not because of anything the user did, just because the column is
+        // required. An empty string is a valid VARCHAR NOT NULL value, so
+        // the insert now succeeds and the user fixes the placeholder via
+        // ordinary cell editing, same as any other value.
         let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
         await viewModel.load()
 
         await viewModel.insertBlankRow()
-        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertNil(viewModel.errorMessage)
 
-        let rows = try await service.query("SELECT COUNT(*) AS cnt FROM widgets")
-        XCTAssertEqual(rows.first?.column("cnt")?.int, 3, "failed insert must not leave a partial row behind")
+        let rows = try await service.query("SELECT COUNT(*) AS cnt FROM widgets WHERE name = ''")
+        XCTAssertEqual(rows.first?.column("cnt")?.int, 1)
+    }
+
+    func testInsertBlankRowOnTableWithManuallyAssignedPrimaryKeySucceeds() async throws {
+        // A non-auto-increment PRIMARY KEY (common on imported/legacy
+        // schemas) is itself NOT NULL with no default — this is exactly
+        // the case the user hit: every blank insert failed with "Column
+        // 'item_code' cannot be null" before the row even reached the
+        // grid for editing.
+        try await service.execute("DELETE FROM manual_pk_items")
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "manual_pk_items", service: service, introspection: introspection)
+        await viewModel.load()
+
+        await viewModel.insertBlankRow()
+        XCTAssertNil(viewModel.errorMessage)
+
+        let rows = try await service.query("SELECT item_code, label FROM manual_pk_items")
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.column("item_code")?.int, 0)
+        XCTAssertEqual(rows.first?.column("label")?.string, "")
     }
 
     func testPaginationLimitsRowsPerPage() async throws {
@@ -147,5 +168,164 @@ final class TableDataViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
         XCTAssertEqual(viewModel.totalRowCount, 1)
         XCTAssertEqual(viewModel.rows.first?.originalValues["name"]?.displayString, "Bolt")
+    }
+
+    func testApplySortOrdersRowsAndTogglingFlipsDirection() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+
+        await viewModel.applySort(column: "name", ascending: true)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.rows.map { $0.originalValues["name"]?.displayString }, ["Bolt", "Nut", "Washer"])
+
+        await viewModel.applySort(column: "name", ascending: false)
+        XCTAssertNil(viewModel.errorMessage)
+        XCTAssertEqual(viewModel.rows.map { $0.originalValues["name"]?.displayString }, ["Washer", "Nut", "Bolt"])
+    }
+
+    func testRunQuerySelectShowsReadOnlyResultInPlaceOfTheGrid() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+
+        viewModel.queryText = "SELECT name FROM widgets WHERE quantity > 100"
+        await viewModel.runQuery()
+
+        XCTAssertNil(viewModel.queryErrorMessage)
+        XCTAssertTrue(viewModel.isShowingQueryResult)
+        XCTAssertEqual(viewModel.queryResultColumns, ["name"])
+        XCTAssertEqual(viewModel.queryResultRows.map { $0.originalValues["name"]?.displayString }, ["Nut"])
+    }
+
+    func testRunQueryUpdateShowsAffectedRowMessageAndAppliesTheWrite() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+
+        viewModel.queryText = "UPDATE widgets SET quantity = 42 WHERE name = 'Bolt'"
+        await viewModel.runQuery()
+
+        XCTAssertNil(viewModel.queryErrorMessage)
+        XCTAssertFalse(viewModel.isShowingQueryResult)
+        XCTAssertEqual(viewModel.queryMessage, "1 satır etkilendi.")
+
+        let rows = try await service.query("SELECT quantity FROM widgets WHERE name = 'Bolt'")
+        XCTAssertEqual(rows.first?.column("quantity")?.int, 42)
+    }
+
+    func testRunQueryBadSqlSurfacesErrorWithoutCrashing() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+
+        viewModel.queryText = "SELEKT * FROM widgets"
+        await viewModel.runQuery()
+
+        XCTAssertNotNil(viewModel.queryErrorMessage)
+        XCTAssertFalse(viewModel.isShowingQueryResult)
+    }
+
+    func testClearQueryResultReturnsToTableGridAndReloadsIt() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+
+        viewModel.queryText = "UPDATE widgets SET quantity = 7 WHERE name = 'Nut'"
+        await viewModel.runQuery()
+        XCTAssertNil(viewModel.queryErrorMessage)
+
+        await viewModel.clearQueryResult()
+
+        XCTAssertFalse(viewModel.isShowingQueryResult)
+        XCTAssertEqual(viewModel.rows.first { $0.originalValues["name"]?.displayString == "Nut" }?.originalValues["quantity"]?.displayString, "7")
+    }
+
+    func testSimpleSingleTableSelectWithPrimaryKeyBecomesEditable() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+        viewModel.isQueryResultEditableRequested = true
+
+        viewModel.queryText = "SELECT id, name, quantity FROM widgets WHERE name = 'Bolt'"
+        await viewModel.runQuery()
+
+        XCTAssertNil(viewModel.queryErrorMessage)
+        XCTAssertNotNil(viewModel.queryEditContext)
+        XCTAssertTrue(viewModel.isQueryResultEditable)
+        XCTAssertNil(viewModel.queryResultEditabilityNote)
+    }
+
+    func testQueryMissingPrimaryKeyColumnStaysReadOnlyEvenWhenEditableRequested() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+        viewModel.isQueryResultEditableRequested = true
+
+        // No `id` column selected, so there's nothing to build a WHERE from.
+        viewModel.queryText = "SELECT name, quantity FROM widgets"
+        await viewModel.runQuery()
+
+        XCTAssertNil(viewModel.queryErrorMessage)
+        XCTAssertNil(viewModel.queryEditContext)
+        XCTAssertFalse(viewModel.isQueryResultEditable)
+        XCTAssertNotNil(viewModel.queryResultEditabilityNote)
+    }
+
+    func testJoinQueryStaysReadOnlyEvenWhenEditableRequested() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+        viewModel.isQueryResultEditableRequested = true
+
+        viewModel.queryText = """
+            SELECT w.id, w.name, l.message FROM widgets w
+            JOIN widget_logs_nopk l ON l.widget_id = w.id
+            """
+        await viewModel.runQuery()
+
+        XCTAssertNil(viewModel.queryErrorMessage)
+        XCTAssertNil(viewModel.queryEditContext)
+        XCTAssertFalse(viewModel.isQueryResultEditable)
+    }
+
+    func testCommitQueryResultEditUpdatesOnlyTheChangedColumnInTheDatabase() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+        viewModel.isQueryResultEditableRequested = true
+
+        viewModel.queryText = "SELECT id, name, quantity, notes FROM widgets WHERE name = 'Bolt'"
+        await viewModel.runQuery()
+        guard let row = viewModel.queryResultRows.first else { return XCTFail("expected a result row") }
+
+        await viewModel.commitQueryResultEdit(rowId: row.id, column: "quantity", newText: "321")
+        XCTAssertNil(viewModel.queryErrorMessage)
+
+        let check = try await service.query("SELECT quantity, notes FROM widgets WHERE id = 1")
+        XCTAssertEqual(check.first?.column("quantity")?.int, 321)
+        XCTAssertEqual(check.first?.column("notes")?.string, "Standard bolt")
+    }
+
+    func testDeleteQueryResultRowRemovesFromDatabaseAndRefreshesResults() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+        viewModel.isQueryResultEditableRequested = true
+
+        viewModel.queryText = "SELECT id, name FROM widgets"
+        await viewModel.runQuery()
+        guard let washer = viewModel.queryResultRows.first(where: { $0.originalValues["name"]?.displayString == "Washer" }) else {
+            return XCTFail("expected seed row missing")
+        }
+
+        await viewModel.deleteQueryResultRow(washer)
+        XCTAssertNil(viewModel.queryErrorMessage)
+
+        let check = try await service.query("SELECT COUNT(*) AS cnt FROM widgets")
+        XCTAssertEqual(check.first?.column("cnt")?.int, 2)
+        XCTAssertFalse(viewModel.queryResultRows.contains { $0.originalValues["name"]?.displayString == "Washer" })
+    }
+
+    func testEditableToggleOffMakesQueryResultReadOnlyEvenWithAQualifyingQuery() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+        viewModel.isQueryResultEditableRequested = false
+
+        viewModel.queryText = "SELECT id, name FROM widgets"
+        await viewModel.runQuery()
+
+        XCTAssertNotNil(viewModel.queryEditContext, "the query itself still qualifies")
+        XCTAssertFalse(viewModel.isQueryResultEditable, "but editing wasn't requested")
     }
 }

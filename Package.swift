@@ -17,6 +17,9 @@ let package = Package(
             name: "MySQLMacClient",
             dependencies: [
                 .product(name: "MySQLNIO", package: "mysql-nio")
+            ],
+            resources: [
+                .copy("Resources")
             ]
         ),
         .testTarget(
