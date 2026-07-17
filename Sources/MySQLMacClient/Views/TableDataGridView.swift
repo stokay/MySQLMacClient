@@ -4,12 +4,22 @@ import SwiftUI
 /// itself is `SpreadsheetGridView`, an `NSTableView` wrapper — see that
 /// file for why this isn't SwiftUI's native `Table`.
 ///
-/// Layout is a `VSplitView`: the SQL query panel (when open) and the grid
-/// share the available height with a user-draggable divider, each pane
-/// carrying its own in-view toolbar instead of the window's.
+/// The SQL query panel (when open) sits above the grid with a draggable
+/// divider between them. This is deliberately *not* a `VSplitView`:
+/// `VSplitView` decides pane heights itself when a pane first appears, and
+/// it repeatedly opened the query panel squeezed below its content's real
+/// minimum (toolbar crushed under the window toolbar) no matter what
+/// min/ideal frames the pane declared. Owning the height in a `@State` and
+/// applying it as an exact `.frame(height:)` makes a squeezed first layout
+/// impossible, at the cost of hand-rolling the divider drag.
 struct TableDataGridView: View {
     @StateObject private var viewModel: TableDataViewModel
     @ObservedObject var insertionBridge: SQLInsertionBridge
+
+    private static let minPanelHeight: CGFloat = 180
+    private static let minGridHeight: CGFloat = 150
+    @State private var queryPanelHeight: CGFloat = Self.minPanelHeight
+    @State private var dragStartHeight: CGFloat?
 
     init(
         databaseName: String,
@@ -28,19 +38,18 @@ struct TableDataGridView: View {
     }
 
     var body: some View {
-        VSplitView {
-            if viewModel.isQueryPanelVisible {
-                QueryPanelView(viewModel: viewModel)
-                    // Below ~150 the toolbar/editor/status row genuinely
-                    // don't all fit (toolbar ~36 + divider 1 + editor's own
-                    // 70 minimum + status row ~28) — the old 90 minimum was
-                    // less than that, so `VSplitView` could park the pane
-                    // at a height where content had to be clipped.
-                    .frame(minHeight: 150, idealHeight: 180)
-            }
+        GeometryReader { geometry in
+            VStack(spacing: 0) {
+                if viewModel.isQueryPanelVisible {
+                    QueryPanelView(viewModel: viewModel)
+                        .frame(height: clampedPanelHeight(totalHeight: geometry.size.height))
 
-            gridPane
-                .frame(minHeight: 150)
+                    splitDivider(totalHeight: geometry.size.height)
+                }
+
+                gridPane
+                    .frame(maxHeight: .infinity)
+            }
         }
         .task(id: viewModel.tableName) {
             await viewModel.load()
@@ -52,6 +61,58 @@ struct TableDataGridView: View {
             viewModel.pendingQueryInsertion = text
             insertionBridge.pendingText = nil
         }
+        .onChange(of: insertionBridge.pendingAppend) { _, newValue in
+            guard let text = newValue else { return }
+            viewModel.isQueryPanelVisible = true
+            viewModel.pendingQueryAppend = text
+            insertionBridge.pendingAppend = nil
+        }
+        // `.onChange` only fires on *changes after* this view exists — when
+        // the context menu selects a table whose grid wasn't open yet, the
+        // bridge is written before this view is created, so the value must
+        // also be consumed once at appearance.
+        .onAppear {
+            if let text = insertionBridge.pendingAppend {
+                viewModel.isQueryPanelVisible = true
+                viewModel.pendingQueryAppend = text
+                insertionBridge.pendingAppend = nil
+            }
+        }
+    }
+
+    /// The panel never renders below its content's real minimum, and the
+    /// grid always keeps at least `minGridHeight` — whichever way the user
+    /// drags or the window resizes.
+    private func clampedPanelHeight(totalHeight: CGFloat) -> CGFloat {
+        let maxAllowed = max(Self.minPanelHeight, totalHeight - Self.minGridHeight)
+        return min(max(queryPanelHeight, Self.minPanelHeight), maxAllowed)
+    }
+
+    private func splitDivider(totalHeight: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color(nsColor: .gridLineColor))
+            .frame(height: 5)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside {
+                    NSCursor.resizeUpDown.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if dragStartHeight == nil {
+                            dragStartHeight = clampedPanelHeight(totalHeight: totalHeight)
+                        }
+                        queryPanelHeight = (dragStartHeight ?? Self.minPanelHeight) + value.translation.height
+                    }
+                    .onEnded { _ in
+                        queryPanelHeight = clampedPanelHeight(totalHeight: totalHeight)
+                        dragStartHeight = nil
+                    }
+            )
     }
 
     private var gridPane: some View {

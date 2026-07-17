@@ -145,3 +145,22 @@ func wrapInGridCellView(_ subview: NSView, centered: Bool) -> NSView {
     }
     return cell
 }
+
+/// Shared confirmation before a row's trash button actually deletes it —
+/// used by both grids (`SpreadsheetGridView` and `QueryResultGridView`)
+/// since a one-click, no-undo delete is easy to trigger by accident.
+@MainActor
+func confirmRowDeletion(in window: NSWindow?, onConfirm: @escaping () -> Void) {
+    guard let window else { return }
+    let alert = NSAlert()
+    alert.messageText = "Bu satır silinsin mi?"
+    alert.informativeText = "Bu işlem geri alınamaz."
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Sil")
+    alert.addButton(withTitle: "İptal")
+    alert.buttons.first?.hasDestructiveAction = true
+    alert.beginSheetModal(for: window) { response in
+        guard response == .alertFirstButtonReturn else { return }
+        onConfirm()
+    }
+}

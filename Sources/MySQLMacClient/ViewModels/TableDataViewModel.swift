@@ -35,6 +35,10 @@ final class TableDataViewModel: ObservableObject {
     /// One-shot: set by a sidebar double-click, consumed by `SQLTextView`
     /// (inserted at the cursor, then cleared back to `nil`).
     @Published var pendingQueryInsertion: String?
+    /// Like `pendingQueryInsertion`, but appended to the end of the editor
+    /// (after a blank line) and left selected — used by the sidebar's
+    /// "SQL Sorgu Ekle" statement templates.
+    @Published var pendingQueryAppend: String?
     @Published private(set) var isExecutingQuery = false
     @Published var queryErrorMessage: String?
     @Published private(set) var queryMessage: String?
@@ -315,7 +319,15 @@ final class TableDataViewModel: ObservableObject {
         }
     }
 
-    /// Runs whatever's in the editor as-is against this table's database.
+    /// Live selection inside the SQL editor, kept up to date by
+    /// `SQLTextView`'s coordinator. Deliberately *not* `@Published`: no view
+    /// renders it, and publishing would re-invalidate the UI on every
+    /// caret drag.
+    var querySelectedText: String?
+
+    /// Runs the editor's *selected* text when there is a selection, the
+    /// whole editor otherwise (the SQLyog/DBeaver convention) — so part of
+    /// a longer script can be executed by selecting just those lines.
     /// Results replace the editable table grid until `clearQueryResult()`.
     /// Whether they're actually *editable* depends on `resolveQueryEditContext`
     /// recognizing the query as a simple single-table SELECT — arbitrary SQL
@@ -323,14 +335,16 @@ final class TableDataViewModel: ObservableObject {
     /// back to a row's primary key, so those stay read-only regardless of
     /// the Editable toggle.
     func runQuery() async {
-        let trimmed = queryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let selection = querySelectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sqlToRun = selection.isEmpty ? queryText : selection
+        let trimmed = sqlToRun.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         isExecutingQuery = true
         queryErrorMessage = nil
         queryMessage = nil
         defer { isExecutingQuery = false }
         do {
-            let result = try await service.rawQuery(queryText)
+            let result = try await service.rawQuery(sqlToRun)
             if let firstRow = result.rows.first {
                 let columnNames = firstRow.columnDefinitions.map(\.name)
                 queryResultColumns = columnNames
@@ -345,7 +359,7 @@ final class TableDataViewModel: ObservableObject {
                 }
                 isShowingQueryResult = true
                 queryMessage = "\(result.rows.count) satır döndürüldü."
-                await resolveQueryEditContext(columnNames: columnNames)
+                await resolveQueryEditContext(executedSQL: sqlToRun, columnNames: columnNames)
             } else {
                 queryResultColumns = []
                 queryResultRows = []
@@ -443,9 +457,9 @@ final class TableDataViewModel: ObservableObject {
         }
     }
 
-    private func resolveQueryEditContext(columnNames: [String]) async {
+    private func resolveQueryEditContext(executedSQL: String, columnNames: [String]) async {
         queryEditContext = nil
-        guard let detected = detectSingleTableSelect(queryText) else { return }
+        guard let detected = detectSingleTableSelect(executedSQL) else { return }
         do {
             let pkColumns = try await introspection.primaryKeyColumnNames(forTable: detected.table, inDatabase: detected.database)
             guard !pkColumns.isEmpty, Set(pkColumns).isSubset(of: Set(columnNames)) else { return }

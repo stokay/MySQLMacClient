@@ -15,6 +15,12 @@ struct TableListView: View {
     @ObservedObject var viewModel: SchemaTreeViewModel
     @Binding var selectedTable: TableInfo?
     let insertionBridge: SQLInsertionBridge
+    /// Context-menu actions on a table row — owned by `MainWindowView`,
+    /// which has the session/sheet/confirmation state they need.
+    let onCreateTable: (String) -> Void
+    let onTruncateTable: (TableInfo) -> Void
+    let onDropTable: (TableInfo) -> Void
+    let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
 
     var body: some View {
         Group {
@@ -33,7 +39,15 @@ struct TableListView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(viewModel.databaseNodes) { node in
-                            DatabaseRow(node: node, selectedTable: $selectedTable, insertionBridge: insertionBridge)
+                            DatabaseRow(
+                                node: node,
+                                selectedTable: $selectedTable,
+                                insertionBridge: insertionBridge,
+                                onCreateTable: onCreateTable,
+                                onTruncateTable: onTruncateTable,
+                                onDropTable: onDropTable,
+                                onInsertQueryTemplate: onInsertQueryTemplate
+                            )
                         }
                     }
                     .padding(.vertical, 4)
@@ -179,6 +193,10 @@ private struct DatabaseRow: View {
     @ObservedObject var node: DatabaseNode
     @Binding var selectedTable: TableInfo?
     let insertionBridge: SQLInsertionBridge
+    let onCreateTable: (String) -> Void
+    let onTruncateTable: (TableInfo) -> Void
+    let onDropTable: (TableInfo) -> Void
+    let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
     @State private var isExpanded = false
 
     var body: some View {
@@ -206,7 +224,16 @@ private struct DatabaseRow: View {
                     emptyText: "Tablo yok",
                     onExpand: { Task { await node.loadIfNeeded() } }
                 ) { tableNode in
-                    TableTreeRow(node: tableNode, selectedTable: $selectedTable, indent: 28, insertionBridge: insertionBridge)
+                    TableTreeRow(
+                        node: tableNode,
+                        selectedTable: $selectedTable,
+                        indent: 28,
+                        insertionBridge: insertionBridge,
+                        onCreateTable: onCreateTable,
+                        onTruncateTable: onTruncateTable,
+                        onDropTable: onDropTable,
+                        onInsertQueryTemplate: onInsertQueryTemplate
+                    )
                 }
 
                 CategoryRow(
@@ -220,7 +247,16 @@ private struct DatabaseRow: View {
                     emptyText: "View yok",
                     onExpand: { Task { await node.loadIfNeeded() } }
                 ) { tableNode in
-                    TableTreeRow(node: tableNode, selectedTable: $selectedTable, indent: 28, insertionBridge: insertionBridge)
+                    TableTreeRow(
+                        node: tableNode,
+                        selectedTable: $selectedTable,
+                        indent: 28,
+                        insertionBridge: insertionBridge,
+                        onCreateTable: onCreateTable,
+                        onTruncateTable: onTruncateTable,
+                        onDropTable: onDropTable,
+                        onInsertQueryTemplate: onInsertQueryTemplate
+                    )
                 }
             }
         }
@@ -236,6 +272,10 @@ private struct TableTreeRow: View {
     @Binding var selectedTable: TableInfo?
     let indent: CGFloat
     let insertionBridge: SQLInsertionBridge
+    let onCreateTable: (String) -> Void
+    let onTruncateTable: (TableInfo) -> Void
+    let onDropTable: (TableInfo) -> Void
+    let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
     @State private var isExpanded = false
 
     var body: some View {
@@ -254,6 +294,13 @@ private struct TableTreeRow: View {
                     insertionBridge.pendingText = "`\(node.info.database)`.`\(node.info.name)`"
                 }
             )
+            .contextMenu {
+                // TRUNCATE/DROP TABLE don't apply to views, and the SQL
+                // templates assume a real table — so views get no menu.
+                if !node.info.isView {
+                    tableContextMenu
+                }
+            }
 
             if isExpanded {
                 CategoryRow(
@@ -284,6 +331,41 @@ private struct TableTreeRow: View {
                     IndexRow(index: index, indent: indent + 28)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var tableContextMenu: some View {
+        Menu("SQL Sorgu Ekle") {
+            Button("INSERT INTO") {
+                onInsertQueryTemplate(node.info, .insert)
+            }
+            Button("UPDATE") {
+                onInsertQueryTemplate(node.info, .update)
+            }
+            Button("DELETE FROM") {
+                onInsertQueryTemplate(node.info, .delete)
+            }
+            Button("SELECT") {
+                onInsertQueryTemplate(node.info, .select)
+            }
+        }
+
+        Button("Yeni Tablo Oluştur") {
+            onCreateTable(node.info.database)
+        }
+
+        Button("Alter Table") {}
+            .disabled(true)
+
+        Divider()
+
+        Button("Truncate Table") {
+            onTruncateTable(node.info)
+        }
+
+        Button("Drop Table", role: .destructive) {
+            onDropTable(node.info)
         }
     }
 }

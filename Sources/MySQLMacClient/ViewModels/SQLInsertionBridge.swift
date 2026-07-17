@@ -10,4 +10,8 @@ import Foundation
 @MainActor
 final class SQLInsertionBridge: ObservableObject {
     @Published var pendingText: String?
+    /// A full statement template (from the sidebar's "SQL Sorgu Ekle"
+    /// context menu) to be *appended* after the editor's existing content —
+    /// unlike `pendingText`, which inserts at the cursor.
+    @Published var pendingAppend: String?
 }

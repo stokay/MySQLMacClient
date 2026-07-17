@@ -47,7 +47,7 @@ struct QueryResultGridView: NSViewRepresentable {
         context.coordinator.onCommitEdit = onCommitEdit
         context.coordinator.onDeleteRow = onDeleteRow
         context.coordinator.rebuildColumnsIfNeeded(columnNames: columnNames, isEditable: isEditable)
-        context.coordinator.tableView?.reloadData()
+        context.coordinator.reloadPreservingActiveEdit()
     }
 
     func makeCoordinator() -> Coordinator {
@@ -65,6 +65,9 @@ struct QueryResultGridView: NSViewRepresentable {
 
         private var lastColumnNames: [String] = []
         private var lastIsEditable = false
+        // See `SpreadsheetGridView.Coordinator` for why this needs
+        // `nonisolated(unsafe)` — `deinit` runs nonisolated even here.
+        nonisolated(unsafe) private var keyMonitor: Any?
         private static let deleteColumnID = NSUserInterfaceItemIdentifier("__delete__")
 
         init(
@@ -79,6 +82,50 @@ struct QueryResultGridView: NSViewRepresentable {
             self.isEditable = isEditable
             self.onCommitEdit = onCommitEdit
             self.onDeleteRow = onDeleteRow
+            super.init()
+            // See the identical setup in `SpreadsheetGridView.Coordinator`:
+            // a local event monitor is what actually wins the race against
+            // SwiftUI's own Tab-focus handling for a table embedded via
+            // `NSViewRepresentable`.
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                // `NSEvent` isn't `Sendable`, so it can't be the return value
+                // of `assumeIsolated`'s closure — only a plain `Bool` crosses
+                // back out; the actual `NSEvent?` result is assembled here,
+                // outside the isolated closure.
+                let consumed = MainActor.assumeIsolated { self?.handleKeyDown(event) ?? false }
+                return consumed ? nil : event
+            }
+        }
+
+        deinit {
+            if let keyMonitor {
+                NSEvent.removeMonitor(keyMonitor)
+            }
+        }
+
+        private func handleKeyDown(_ event: NSEvent) -> Bool {
+            guard event.keyCode == 48 /* Tab */, let (row, columnName) = currentEditingCell() else { return false }
+            moveEdit(fromRow: row, column: columnName, direction: event.modifierFlags.contains(.shift) ? -1 : 1)
+            return true
+        }
+
+        private func currentEditingCell() -> (row: Int, column: String)? {
+            guard let tableView, let window = tableView.window,
+                  let fieldEditor = window.firstResponder as? NSTextView,
+                  let editedField = fieldEditor.delegate as? NSTextField,
+                  editedField.isDescendant(of: tableView),
+                  let identifier = editedField.identifier?.rawValue
+            else { return nil }
+            let parts = identifier.split(separator: "|", maxSplits: 1)
+            guard parts.count == 2, let row = Int(parts[0]) else { return nil }
+            return (row, String(parts[1]))
+        }
+
+        /// See `SpreadsheetGridView.Coordinator.reloadPreservingActiveEdit`
+        /// — same reload-kills-the-active-editor problem, same fix.
+        func reloadPreservingActiveEdit() {
+            guard currentEditingCell() == nil else { return }
+            tableView?.reloadData()
         }
 
         func rebuildColumnsIfNeeded(columnNames: [String], isEditable: Bool) {
@@ -155,7 +202,10 @@ struct QueryResultGridView: NSViewRepresentable {
         @objc private func deleteTapped(_ sender: NSButton) {
             let row = sender.tag
             guard row < rows.count else { return }
-            onDeleteRow(rows[row])
+            let dataRow = rows[row]
+            confirmRowDeletion(in: tableView?.window) { [weak self] in
+                self?.onDeleteRow(dataRow)
+            }
         }
 
         func controlTextDidEndEditing(_ obj: Notification) {
@@ -165,6 +215,34 @@ struct QueryResultGridView: NSViewRepresentable {
             guard parts.count == 2, let row = Int(parts[0]), row < rows.count else { return }
             let columnName = String(parts[1])
             onCommitEdit(rows[row].id, columnName, textField.stringValue)
+        }
+
+        private func moveEdit(fromRow row: Int, column columnName: String, direction: Int) {
+            guard let tableView, isEditable else { return }
+            guard let currentIndex = lastColumnNames.firstIndex(of: columnName) else { return }
+
+            var targetRow = row
+            var targetIndex = currentIndex + direction
+            if targetIndex >= lastColumnNames.count {
+                targetIndex = 0
+                targetRow += 1
+            } else if targetIndex < 0 {
+                targetIndex = lastColumnNames.count - 1
+                targetRow -= 1
+            }
+            guard targetRow >= 0, targetRow < rows.count else { return }
+
+            let targetColumnName = lastColumnNames[targetIndex]
+            guard let tableColumnIndex = tableView.tableColumns.firstIndex(where: { $0.identifier.rawValue == targetColumnName }) else { return }
+
+            tableView.scrollRowToVisible(targetRow)
+            guard
+                let cellView = tableView.view(atColumn: tableColumnIndex, row: targetRow, makeIfNecessary: true),
+                let targetField = cellView.subviews.first(where: { $0 is NSTextField }) as? NSTextField
+            else { return }
+
+            tableView.window?.makeFirstResponder(targetField)
+            targetField.currentEditor()?.selectAll(nil)
         }
     }
 }

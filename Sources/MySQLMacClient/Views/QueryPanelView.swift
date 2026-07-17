@@ -5,6 +5,7 @@ import SwiftUI
 /// `TableDataGridView`); "Tablo Görünümüne Dön" switches back.
 struct QueryPanelView: View {
     @ObservedObject var viewModel: TableDataViewModel
+    @StateObject private var undoProxy = SQLEditorUndoProxy()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -12,8 +13,14 @@ struct QueryPanelView: View {
 
             Divider()
 
-            SQLTextView(text: $viewModel.queryText, pendingInsertion: $viewModel.pendingQueryInsertion)
-                .frame(minHeight: 70, idealHeight: 90)
+            SQLTextView(
+                undoProxy: undoProxy,
+                text: $viewModel.queryText,
+                pendingInsertion: $viewModel.pendingQueryInsertion,
+                pendingAppend: $viewModel.pendingQueryAppend,
+                selectedText: $viewModel.querySelectedText
+            )
+            .frame(minHeight: 70, maxHeight: .infinity)
 
             statusRow
         }
@@ -65,6 +72,27 @@ struct QueryPanelView: View {
             }
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(viewModel.isExecutingQuery || viewModel.queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Seçili metin varsa yalnızca onu, yoksa tüm sorguyu çalıştırır (⌘↩)")
+
+            Divider().frame(height: 16)
+
+            Button {
+                undoProxy.undo()
+            } label: {
+                Image(systemName: "arrow.uturn.backward")
+            }
+            .disabled(!undoProxy.canUndo)
+            .help("Geri Al (⌘Z)")
+
+            Button {
+                undoProxy.redo()
+            } label: {
+                Image(systemName: "arrow.uturn.forward")
+            }
+            .disabled(!undoProxy.canRedo)
+            .help("Yinele (⇧⌘Z)")
+
+            Divider().frame(height: 16)
 
             if viewModel.isShowingQueryResult {
                 Button {

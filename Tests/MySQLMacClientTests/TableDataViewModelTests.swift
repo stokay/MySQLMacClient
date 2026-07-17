@@ -196,6 +196,36 @@ final class TableDataViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.queryResultRows.map { $0.originalValues["name"]?.displayString }, ["Nut"])
     }
 
+    func testRunQueryExecutesOnlySelectionWhenOneExists() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+
+        // The full editor holds a destructive UPDATE; the selection is a
+        // harmless SELECT. Only the selection may run.
+        viewModel.queryText = "UPDATE widgets SET quantity = 42 WHERE name = 'Bolt'"
+        viewModel.querySelectedText = "SELECT name FROM widgets WHERE name = 'Nut'"
+        await viewModel.runQuery()
+
+        XCTAssertNil(viewModel.queryErrorMessage)
+        XCTAssertEqual(viewModel.queryResultColumns, ["name"])
+        XCTAssertEqual(viewModel.queryResultRows.map { $0.originalValues["name"]?.displayString }, ["Nut"])
+
+        let rows = try await service.query("SELECT quantity FROM widgets WHERE name = 'Bolt'")
+        XCTAssertEqual(rows.first?.column("quantity")?.int, 100, "editördeki UPDATE çalışmamalıydı")
+    }
+
+    func testRunQueryFallsBackToFullTextWhenSelectionIsEmpty() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+
+        viewModel.queryText = "SELECT name FROM widgets WHERE quantity > 100"
+        viewModel.querySelectedText = "   "
+        await viewModel.runQuery()
+
+        XCTAssertNil(viewModel.queryErrorMessage)
+        XCTAssertEqual(viewModel.queryResultRows.map { $0.originalValues["name"]?.displayString }, ["Nut"])
+    }
+
     func testRunQueryUpdateShowsAffectedRowMessageAndAppliesTheWrite() async throws {
         let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
         await viewModel.load()

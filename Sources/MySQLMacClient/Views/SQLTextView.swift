@@ -6,12 +6,92 @@ import AppKit
 /// reapplied to the whole buffer on every edit. Queries are short enough
 /// that re-highlighting from scratch each keystroke is cheap; this isn't
 /// meant to scale to editing large scripts.
+/// Bridges the SQL editor's undo stack to SwiftUI so toolbar buttons can
+/// drive it and stay correctly enabled/disabled. The stack itself is the
+/// coordinator's dedicated `UndoManager` (see `undoManager(for:)`), not the
+/// window's shared one — otherwise "undo" in the query panel could revert
+/// an unrelated grid-cell edit.
+@MainActor
+final class SQLEditorUndoProxy: ObservableObject {
+    @Published private(set) var canUndo = false
+    @Published private(set) var canRedo = false
+
+    private weak var manager: UndoManager?
+    private weak var textView: NSTextView?
+    // Tokens are removed in `deinit`, which is nonisolated — same escape
+    // hatch as the grids' key monitors.
+    nonisolated(unsafe) private var observerTokens: [NSObjectProtocol] = []
+
+    func attach(manager: UndoManager, textView: NSTextView) {
+        guard manager !== self.manager else { return }
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+        observerTokens = []
+        self.manager = manager
+        self.textView = textView
+
+        // `.checkpoint` is what fires during typing (group open but not
+        // yet closed) — without it the Undo button stays disabled until
+        // the user clicks elsewhere.
+        let names: [Notification.Name] = [
+            .NSUndoManagerDidUndoChange,
+            .NSUndoManagerDidRedoChange,
+            .NSUndoManagerDidCloseUndoGroup,
+            .NSUndoManagerCheckpoint,
+        ]
+        for name in names {
+            observerTokens.append(NotificationCenter.default.addObserver(forName: name, object: manager, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refresh() }
+            })
+        }
+        refresh()
+    }
+
+    deinit {
+        for token in observerTokens {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    func undo() {
+        // Typing is coalesced into an open group until something ends it;
+        // the menu's own undo: action breaks it implicitly, a direct
+        // `manager.undo()` does not — without this, undoing mid-typing
+        // could swallow more (or less) than the last burst of typing.
+        textView?.breakUndoCoalescing()
+        manager?.undo()
+        refresh()
+    }
+
+    func redo() {
+        textView?.breakUndoCoalescing()
+        manager?.redo()
+        refresh()
+    }
+
+    private func refresh() {
+        canUndo = manager?.canUndo ?? false
+        canRedo = manager?.canRedo ?? false
+    }
+}
+
 struct SQLTextView: NSViewRepresentable {
+    let undoProxy: SQLEditorUndoProxy
     @Binding var text: String
     /// One-shot signal: when set, its text is inserted at the *current*
     /// cursor position (double-clicking a table/column in the sidebar sets
     /// this) and the binding is cleared back to `nil` right after.
     @Binding var pendingInsertion: String?
+    /// One-shot like `pendingInsertion`, but the text is appended after the
+    /// editor's existing content (separated by a blank line) and left
+    /// *selected*, so Çalıştır immediately targets just the new statement.
+    @Binding var pendingAppend: String?
+    /// Mirrors the editor's current selection (nil when the selection is
+    /// empty) so "Çalıştır" can execute only the selected statement. Bound
+    /// to a plain non-`@Published` var on the view model on purpose — see
+    /// `TableDataViewModel.querySelectedText`.
+    @Binding var selectedText: String?
 
     static let keywords: Set<String> = [
         "select", "from", "where", "insert", "into", "values", "update", "set",
@@ -44,6 +124,7 @@ struct SQLTextView: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
+        textView.allowsUndo = true
         textView.textContainerInset = NSSize(width: 4, height: 6)
         textView.string = text
         context.coordinator.highlight(textView)
@@ -53,7 +134,15 @@ struct SQLTextView: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
+
+        let rulerView = LineNumberRulerView(textView: textView, scrollView: scrollView)
+        scrollView.verticalRulerView = rulerView
+        scrollView.hasVerticalRuler = true
+        scrollView.rulersVisible = true
+
         context.coordinator.textView = textView
+        context.coordinator.rulerView = rulerView
+        undoProxy.attach(manager: context.coordinator.editorUndoManager, textView: textView)
         return scrollView
     }
 
@@ -84,29 +173,84 @@ struct SQLTextView: NSViewRepresentable {
             return
         }
 
+        // Same one-shot discipline as `pendingInsertion` (cleared
+        // synchronously before any mutation that could re-enter this
+        // method — see that branch's history for why that ordering is
+        // non-negotiable).
+        if let appendText = pendingAppend {
+            pendingAppend = nil
+            textView.window?.makeFirstResponder(textView)
+
+            let existing = textView.string
+            let separator: String
+            if existing.isEmpty {
+                separator = ""
+            } else if existing.hasSuffix("\n\n") {
+                separator = ""
+            } else if existing.hasSuffix("\n") {
+                separator = "\n"
+            } else {
+                separator = "\n\n"
+            }
+            let endRange = NSRange(location: (existing as NSString).length, length: 0)
+            textView.insertText(separator + appendText, replacementRange: endRange)
+
+            // Select just the template (not the separator), so ⌘↩ runs
+            // exactly the appended statement.
+            let start = endRange.location + (separator as NSString).length
+            textView.setSelectedRange(NSRange(location: start, length: (appendText as NSString).length))
+            textView.scrollRangeToVisible(textView.selectedRange())
+            return
+        }
+
         guard textView.string != text else { return }
         textView.string = text
         context.coordinator.highlight(textView)
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
+        Coordinator(text: $text, selectedText: $selectedText)
     }
 
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         let text: Binding<String>
+        let selectedText: Binding<String?>
         weak var textView: NSTextView?
+        weak var rulerView: LineNumberRulerView?
 
-        init(text: Binding<String>) {
+        /// The editor's own isolated undo stack, handed to the text view
+        /// via the `undoManager(for:)` delegate method below.
+        let editorUndoManager = UndoManager()
+
+        init(text: Binding<String>, selectedText: Binding<String?>) {
             self.text = text
+            self.selectedText = selectedText
         }
 
+        func undoManager(for view: NSTextView) -> UndoManager? {
+            editorUndoManager
+        }
+
+        /// Re-entrancy guard: registering the uppercase replacements with
+        /// the undo system (`didChangeText()`) re-posts this same
+        /// notification mid-loop, and letting that nested call run
+        /// `uppercaseKeywords` again would corrupt the outer loop's ranges.
+        private var isApplyingKeywordCase = false
+
         func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
+            guard let textView = notification.object as? NSTextView, !isApplyingKeywordCase else { return }
             uppercaseKeywords(in: textView)
             text.wrappedValue = textView.string
             highlight(textView)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            let range = textView.selectedRange()
+            selectedText.wrappedValue = range.length > 0
+                ? (textView.string as NSString).substring(with: range)
+                : nil
         }
 
         /// Rewrites any reserved word to its uppercase form in place. Runs
@@ -115,6 +259,14 @@ struct SQLTextView: NSViewRepresentable {
         /// visual effect. Uppercasing ASCII keywords never changes their
         /// character count, so the caret position is restorable verbatim
         /// afterward instead of jumping around while typing.
+        ///
+        /// Each replacement goes through `shouldChangeText`/`didChangeText`
+        /// so the undo manager records it in the *same undo group* as the
+        /// keystroke that triggered it — ⌘Z then reverts the keystroke and
+        /// the auto-uppercase together. The old direct
+        /// `storage.replaceCharacters` bypassed undo entirely, which would
+        /// have made undo restore typed characters while leaving half-
+        /// uppercased keyword fragments behind.
         private func uppercaseKeywords(in textView: NSTextView) {
             guard let storage = textView.textStorage else { return }
             let nsString = storage.string as NSString
@@ -131,11 +283,13 @@ struct SQLTextView: NSViewRepresentable {
             }
             guard !replacements.isEmpty else { return }
 
-            storage.beginEditing()
+            isApplyingKeywordCase = true
+            defer { isApplyingKeywordCase = false }
             for (range, replacement) in replacements.reversed() {
+                guard textView.shouldChangeText(in: range, replacementString: replacement) else { continue }
                 storage.replaceCharacters(in: range, with: replacement)
+                textView.didChangeText()
             }
-            storage.endEditing()
             textView.selectedRanges = savedSelection
         }
 
@@ -162,6 +316,75 @@ struct SQLTextView: NSViewRepresentable {
                 storage.addAttribute(.foregroundColor, value: SQLTextView.commentColor, range: match.range)
             }
             storage.endEditing()
+
+            // `highlight` runs after every text mutation (typing and
+            // programmatic), so it doubles as the "line count may have
+            // changed" hook for the gutter.
+            rulerView?.needsDisplay = true
+        }
+    }
+}
+
+/// Line-number gutter for the SQL editor. `NSRulerView` already tracks the
+/// client view's scrolling; this only has to draw the right number next to
+/// each line's first fragment.
+final class LineNumberRulerView: NSRulerView {
+    private weak var textView: NSTextView?
+
+    init(textView: NSTextView, scrollView: NSScrollView) {
+        self.textView = textView
+        super.init(scrollView: scrollView, orientation: .verticalRuler)
+        clientView = textView
+        ruleThickness = 34
+    }
+
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    override func drawHashMarksAndLabels(in rect: NSRect) {
+        guard let textView, let layoutManager = textView.layoutManager, let container = textView.textContainer else { return }
+
+        NSColor.controlBackgroundColor.setFill()
+        bounds.fill()
+        NSColor.gridLineColor.setFill()
+        NSRect(x: bounds.maxX - 1, y: bounds.minY, width: 1, height: bounds.height).fill()
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        // Converting from the text view's coordinates bakes in the scroll
+        // offset, so numbers stay glued to their lines while scrolling.
+        let textViewOriginInRuler = convert(NSPoint.zero, from: textView).y
+        let insetHeight = textView.textContainerInset.height
+
+        func drawNumber(_ lineNumber: Int, atLineTop lineTop: CGFloat, lineHeight: CGFloat) {
+            let label = NSAttributedString(string: String(lineNumber), attributes: attributes)
+            let size = label.size()
+            let y = lineTop + insetHeight + textViewOriginInRuler + (lineHeight - size.height) / 2
+            guard y + size.height >= 0, y <= bounds.maxY else { return }
+            label.draw(at: NSPoint(x: ruleThickness - size.width - 5, y: y))
+        }
+
+        let content = textView.string as NSString
+        var lineNumber = 1
+        var characterIndex = 0
+        while characterIndex < content.length {
+            let lineRange = content.lineRange(for: NSRange(location: characterIndex, length: 0))
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: lineRange, actualCharacterRange: nil)
+            let lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: container)
+            let firstFragmentHeight = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil).height
+            drawNumber(lineNumber, atLineTop: lineRect.minY, lineHeight: firstFragmentHeight)
+            characterIndex = NSMaxRange(lineRange)
+            lineNumber += 1
+        }
+
+        // The "extra line fragment" is the caret line after a trailing
+        // newline — and the only line at all in an empty document.
+        if layoutManager.extraLineFragmentTextContainer != nil {
+            let extraRect = layoutManager.extraLineFragmentRect
+            drawNumber(lineNumber, atLineTop: extraRect.minY, lineHeight: extraRect.height)
         }
     }
 }
