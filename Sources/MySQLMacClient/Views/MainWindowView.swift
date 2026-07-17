@@ -7,6 +7,7 @@ struct MainWindowView: View {
     @StateObject private var schemaTreeViewModel: SchemaTreeViewModel
     @StateObject private var insertionBridge = SQLInsertionBridge()
     @State private var selectedTable: TableInfo?
+    @State private var isShowingCreateTable = false
 
     init(session: AppSession, onDisconnect: @escaping () -> Void) {
         self.session = session
@@ -47,6 +48,37 @@ struct MainWindowView: View {
         }
         .task {
             await schemaTreeViewModel.loadDatabases()
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    isShowingCreateTable = true
+                } label: {
+                    Label {
+                        Text("Yeni Tablo")
+                    } icon: {
+                        Image.bundled("create_table", fallbackSystemImage: "tablecells.badge.plus")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 30, height: 30)
+                    }
+                }
+                .help("Yeni Tablo Oluştur")
+            }
+        }
+        .sheet(isPresented: $isShowingCreateTable) {
+            CreateTableView(
+                service: session.mysqlService,
+                schemaTree: schemaTreeViewModel,
+                defaultDatabase: selectedTable?.database ?? schemaTreeViewModel.databaseNodes.first?.info.name ?? ""
+            ) { createdTable in
+                Task {
+                    if let node = schemaTreeViewModel.databaseNodes.first(where: { $0.info.name == createdTable.database }) {
+                        await node.reload()
+                    }
+                    selectedTable = createdTable
+                }
+            }
         }
     }
 }

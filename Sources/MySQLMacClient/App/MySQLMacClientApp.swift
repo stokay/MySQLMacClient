@@ -50,7 +50,7 @@ struct MySQLMacClientApp: App {
                         Label {
                             Text("Yeni Bağlantı")
                         } icon: {
-                            newConnectionIcon
+                            Image.bundled("new_connection", fallbackSystemImage: "plus.circle")
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
                                 .frame(width: 30, height: 30)
@@ -60,19 +60,5 @@ struct MySQLMacClientApp: App {
                 }
             }
         }
-    }
-
-    /// Loaded from a plain PNG resource copy rather than an `.xcassets`
-    /// catalog — asset-catalog symbol codegen (`Image(.name)`) needs
-    /// Xcode's build system; this package builds via `swift build` on the
-    /// command line, where a bundled file + `Bundle.module` is what works.
-    private var newConnectionIcon: Image {
-        guard
-            let url = Bundle.module.url(forResource: "new_connection", withExtension: "png", subdirectory: "Resources"),
-            let nsImage = NSImage(contentsOf: url)
-        else {
-            return Image(systemName: "plus.circle")
-        }
-        return Image(nsImage: nsImage)
     }
 }

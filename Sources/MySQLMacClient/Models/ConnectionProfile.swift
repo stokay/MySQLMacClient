@@ -9,6 +9,7 @@ struct ConnectionProfile: Identifiable, Codable, Equatable, Hashable {
     /// nil/empty means "no default database" — the sidebar then shows every
     /// database the user can see on the server (`SHOW DATABASES`).
     var database: String?
+    var note: String?
 
     init(
         id: UUID = UUID(),
@@ -16,7 +17,8 @@ struct ConnectionProfile: Identifiable, Codable, Equatable, Hashable {
         host: String,
         port: Int = 3306,
         username: String,
-        database: String?
+        database: String?,
+        note: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -24,5 +26,6 @@ struct ConnectionProfile: Identifiable, Codable, Equatable, Hashable {
         self.port = port
         self.username = username
         self.database = database
+        self.note = note
     }
 }

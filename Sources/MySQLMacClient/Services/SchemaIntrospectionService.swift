@@ -91,6 +91,28 @@ struct SchemaIntrospectionService {
         }
     }
 
+    /// Every character set the server supports, for the "Yeni Tablo" form's
+    /// picker — the handful of hardcoded names a static list would have
+    /// covered is nowhere near what real servers offer.
+    func characterSets() async throws -> [String] {
+        let rows = try await service.query("SHOW CHARACTER SET")
+        return rows.compactMap { $0.column("Charset")?.string }.sorted()
+    }
+
+    /// Collations for one charset (or every collation on the server when
+    /// `charset` is nil). `charset` is only ever a value this same method's
+    /// sibling (`characterSets()`) returned — server-echoed, not raw user
+    /// input — so it's safely embedded as a literal rather than bound,
+    /// sidestepping `SHOW` statements' patchy prepared-statement support.
+    func collations(forCharset charset: String? = nil) async throws -> [String] {
+        var sql = "SHOW COLLATION"
+        if let charset {
+            sql += " WHERE Charset = '\(charset.replacingOccurrences(of: "'", with: "''"))'"
+        }
+        let rows = try await service.query(sql)
+        return rows.compactMap { $0.column("Collation")?.string }.sorted()
+    }
+
     /// Backtick-escapes a single identifier. Only ever call this with names
     /// that came from `SHOW DATABASES`/`SHOW TABLES`/`SHOW COLUMNS`, never
     /// raw user input.

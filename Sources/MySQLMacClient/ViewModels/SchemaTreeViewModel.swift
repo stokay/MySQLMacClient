@@ -36,6 +36,14 @@ final class DatabaseNode: ObservableObject, Identifiable {
             errorMessage = "Tablo listesi alınamadı: \(error.localizedDescription)"
         }
     }
+
+    /// Forces a re-fetch even if already loaded — used after creating a
+    /// table so the new entry shows up without the user manually toggling
+    /// the row closed and open again.
+    func reload() async {
+        isLoaded = false
+        await loadIfNeeded()
+    }
 }
 
 /// One table/view node. Expanding it reveals two fixed child categories,
