@@ -34,22 +34,27 @@ struct SchemaIntrospectionService {
         }
     }
 
+    /// `FULL` variant so column comments come along — the Alter Table form
+    /// re-emits the whole definition on change, and without the original
+    /// comment a `CHANGE COLUMN` would silently wipe it.
     func columns(forTable table: String, inDatabase database: String) async throws -> [ColumnInfo] {
         let qualifiedTable = try Self.qualifiedIdentifier(database: database, name: table)
         let primaryKeyColumns = Set(try await primaryKeyColumnNames(forTable: table, inDatabase: database))
-        let rows = try await service.query("SHOW COLUMNS FROM \(qualifiedTable)")
+        let rows = try await service.query("SHOW FULL COLUMNS FROM \(qualifiedTable)")
         return rows.compactMap { row -> ColumnInfo? in
             guard let name = row.column("Field")?.string else { return nil }
             let type = row.column("Type")?.string ?? ""
             let isNullable = (row.column("Null")?.string ?? "NO") == "YES"
             let extra = row.column("Extra")?.string ?? ""
+            let comment = row.column("Comment")?.string
             return ColumnInfo(
                 name: name,
                 mysqlType: type,
                 isNullable: isNullable,
                 isPrimaryKey: primaryKeyColumns.contains(name),
                 isAutoIncrement: extra.localizedCaseInsensitiveContains("auto_increment"),
-                defaultValue: row.column("Default")?.string
+                defaultValue: row.column("Default")?.string,
+                comment: (comment?.isEmpty ?? true) ? nil : comment
             )
         }
     }

@@ -21,6 +21,8 @@ struct TableListView: View {
     let onTruncateTable: (TableInfo) -> Void
     let onDropTable: (TableInfo) -> Void
     let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
+    let onAlterTable: (TableInfo) -> Void
+    let onShowTableInfo: (TableInfo) -> Void
 
     var body: some View {
         Group {
@@ -46,7 +48,9 @@ struct TableListView: View {
                                 onCreateTable: onCreateTable,
                                 onTruncateTable: onTruncateTable,
                                 onDropTable: onDropTable,
-                                onInsertQueryTemplate: onInsertQueryTemplate
+                                onInsertQueryTemplate: onInsertQueryTemplate,
+                                onAlterTable: onAlterTable,
+                                onShowTableInfo: onShowTableInfo
                             )
                         }
                     }
@@ -197,6 +201,8 @@ private struct DatabaseRow: View {
     let onTruncateTable: (TableInfo) -> Void
     let onDropTable: (TableInfo) -> Void
     let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
+    let onAlterTable: (TableInfo) -> Void
+    let onShowTableInfo: (TableInfo) -> Void
     @State private var isExpanded = false
 
     var body: some View {
@@ -232,7 +238,9 @@ private struct DatabaseRow: View {
                         onCreateTable: onCreateTable,
                         onTruncateTable: onTruncateTable,
                         onDropTable: onDropTable,
-                        onInsertQueryTemplate: onInsertQueryTemplate
+                        onInsertQueryTemplate: onInsertQueryTemplate,
+                        onAlterTable: onAlterTable,
+                        onShowTableInfo: onShowTableInfo
                     )
                 }
 
@@ -255,7 +263,9 @@ private struct DatabaseRow: View {
                         onCreateTable: onCreateTable,
                         onTruncateTable: onTruncateTable,
                         onDropTable: onDropTable,
-                        onInsertQueryTemplate: onInsertQueryTemplate
+                        onInsertQueryTemplate: onInsertQueryTemplate,
+                        onAlterTable: onAlterTable,
+                        onShowTableInfo: onShowTableInfo
                     )
                 }
             }
@@ -276,6 +286,8 @@ private struct TableTreeRow: View {
     let onTruncateTable: (TableInfo) -> Void
     let onDropTable: (TableInfo) -> Void
     let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
+    let onAlterTable: (TableInfo) -> Void
+    let onShowTableInfo: (TableInfo) -> Void
     @State private var isExpanded = false
 
     var body: some View {
@@ -336,6 +348,12 @@ private struct TableTreeRow: View {
 
     @ViewBuilder
     private var tableContextMenu: some View {
+        Button("İnfo") {
+            onShowTableInfo(node.info)
+        }
+
+        Divider()
+
         Menu("SQL Sorgu Ekle") {
             Button("INSERT INTO") {
                 onInsertQueryTemplate(node.info, .insert)
@@ -355,8 +373,9 @@ private struct TableTreeRow: View {
             onCreateTable(node.info.database)
         }
 
-        Button("Alter Table") {}
-            .disabled(true)
+        Button("Alter Table") {
+            onAlterTable(node.info)
+        }
 
         Divider()
 

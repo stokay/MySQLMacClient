@@ -226,6 +226,23 @@ final class TableDataViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.queryResultRows.map { $0.originalValues["name"]?.displayString }, ["Nut"])
     }
 
+    func testShowTableInfoBuildsTextReportFromLiveSchema() async throws {
+        let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
+        await viewModel.load()
+
+        await viewModel.showTableInfo()
+
+        let report = try XCTUnwrap(viewModel.tableInfoText)
+        XCTAssertTrue(report.contains("/*Table: widgets*/"))
+        XCTAssertTrue(report.contains("/*Column Information*/"))
+        XCTAssertTrue(report.contains("Field"), "SHOW FULL COLUMNS başlıkları görünmeli")
+        XCTAssertTrue(report.contains("id"))
+        XCTAssertTrue(report.contains("/*Index Information*/"))
+        XCTAssertTrue(report.contains("PRIMARY"))
+        XCTAssertTrue(report.contains("/*DDL Information*/"))
+        XCTAssertTrue(report.contains("CREATE TABLE"))
+    }
+
     func testRunQueryUpdateShowsAffectedRowMessageAndAppliesTheWrite() async throws {
         let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
         await viewModel.load()

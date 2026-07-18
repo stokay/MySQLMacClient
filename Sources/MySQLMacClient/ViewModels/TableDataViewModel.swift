@@ -310,6 +310,64 @@ final class TableDataViewModel: ObservableObject {
         return MySQLData(string: "")
     }
 
+    // MARK: - Table info ("İnfo" context-menu action)
+
+    /// Non-nil replaces the grid with the plain-text info report; "Tablo
+    /// Görünümüne Dön" sets it back to nil.
+    @Published var tableInfoText: String?
+
+    /// Builds the SQLyog-style text report (columns / indexes / DDL) for
+    /// this table from `SHOW FULL COLUMNS`, `SHOW INDEX` and
+    /// `SHOW CREATE TABLE`.
+    func showTableInfo() async {
+        do {
+            let qualified = try qualifiedTable()
+            let columnsResult = try await service.rawQuery("SHOW FULL COLUMNS FROM \(qualified)")
+            let indexResult = try await service.rawQuery("SHOW INDEX FROM \(qualified)")
+            let ddlResult = try await service.rawQuery("SHOW CREATE TABLE \(qualified)")
+
+            let (columnHeaders, columnRows) = Self.tabulate(columnsResult.rows)
+            let (indexHeaders, indexRows) = Self.tabulate(indexResult.rows)
+            // Column 2 of SHOW CREATE TABLE ("Create Table") is the DDL.
+            let ddl: String
+            if let firstRow = ddlResult.rows.first, firstRow.columnDefinitions.count >= 2 {
+                ddl = Self.reportString(firstRow.column(firstRow.columnDefinitions[1].name))
+            } else {
+                ddl = "(alınamadı)"
+            }
+
+            tableInfoText = TableInfoReport.assemble(
+                tableName: tableName,
+                columnHeaders: columnHeaders, columnRows: columnRows,
+                indexHeaders: indexHeaders, indexRows: indexRows,
+                ddl: ddl
+            )
+        } catch {
+            tableInfoText = "Tablo bilgisi alınamadı: \(error.localizedDescription)"
+        }
+    }
+
+    /// Result-set → ordered header names + stringified cells, preserving
+    /// the server's own column order (`columnDefinitions`).
+    private nonisolated static func tabulate(_ rows: [MySQLRow]) -> (headers: [String], rows: [[String]]) {
+        guard let firstRow = rows.first else { return ([], []) }
+        let headers = firstRow.columnDefinitions.map(\.name)
+        let values = rows.map { row in
+            headers.map { Self.reportString(row.column($0)) }
+        }
+        return (headers, values)
+    }
+
+    /// `(NULL)` for SQL NULL (the report shows it explicitly, unlike the
+    /// grid); tries `.string` first because SHOW-command result columns
+    /// often arrive typed as blobs that are really text.
+    private nonisolated static func reportString(_ data: MySQLData?) -> String {
+        guard let data, data.buffer != nil else { return "(NULL)" }
+        if let string = data.string { return string }
+        let value = RowValue(mysqlData: data)
+        return value.isNull ? "(NULL)" : value.displayString
+    }
+
     // MARK: - Query panel
 
     func toggleQueryPanel() {

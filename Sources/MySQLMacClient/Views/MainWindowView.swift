@@ -14,6 +14,7 @@ struct MainWindowView: View {
     @State private var createTableDefaultDatabase: String?
     @State private var tablePendingTruncate: TableInfo?
     @State private var tablePendingDrop: TableInfo?
+    @State private var tableToAlter: TableInfo?
     @State private var contextActionError: String?
 
     init(session: AppSession, onDisconnect: @escaping () -> Void) {
@@ -39,6 +40,11 @@ struct MainWindowView: View {
                     onDropTable: { tablePendingDrop = $0 },
                     onInsertQueryTemplate: { table, kind in
                         Task { await insertQueryTemplate(for: table, kind: kind) }
+                    },
+                    onAlterTable: { tableToAlter = $0 },
+                    onShowTableInfo: { table in
+                        selectedTable = table
+                        insertionBridge.pendingShowInfo = true
                     }
                 )
                 .navigationSplitViewColumnWidth(min: 200, ideal: 260)
@@ -101,6 +107,21 @@ struct MainWindowView: View {
                         await node.reload()
                     }
                     selectedTable = createdTable
+                }
+            }
+        }
+        .sheet(item: $tableToAlter) { table in
+            AlterTableView(service: session.mysqlService, table: table) { alteredTable in
+                Task {
+                    if let node = schemaTreeViewModel.databaseNodes.first(where: { $0.info.name == alteredTable.database }) {
+                        await node.reload()
+                    }
+                    // Bounce the selection so the grid rebuilds with the new
+                    // schema even when the table kept its name (same
+                    // reasoning as the truncate refresh below).
+                    selectedTable = nil
+                    try? await Task.sleep(for: .milliseconds(50))
+                    selectedTable = alteredTable
                 }
             }
         }

@@ -4,6 +4,7 @@ enum CreateTableError: Error, LocalizedError {
     case emptyTableName
     case noColumns
     case invalidLength(column: String, value: String)
+    case noChanges
 
     var errorDescription: String? {
         switch self {
@@ -13,35 +14,18 @@ enum CreateTableError: Error, LocalizedError {
             return "En az bir kolon eklemelisiniz."
         case .invalidLength(let column, let value):
             return "\"\(column)\" kolonunun uzunluğu geçersiz: \(value)"
+        case .noChanges:
+            return "Değişiklik yapılmadı."
         }
     }
 }
 
 /// Backs the "Yeni Tablo" form: a SQLyog-style column grid that's translated
 /// into a single `CREATE TABLE` statement and executed against the chosen
-/// database.
+/// database. The column grid rows are the shared `DraftColumn` model — the
+/// Alter Table form uses the same rows seeded from the live schema.
 @MainActor
 final class CreateTableViewModel: ObservableObject {
-    struct DraftColumn: Identifiable {
-        let id = UUID()
-        var name: String = ""
-        var dataType: String = "VARCHAR"
-        var length: String = ""
-        var defaultValue: String = ""
-        var comment: String = ""
-        var isUnsigned: Bool = false
-        var isAutoIncrement: Bool = false
-        var isNotNull: Bool = false
-        // A primary key column is always NOT NULL in MySQL — forcing it here
-        // keeps the checkbox honest instead of silently overriding it only
-        // at SQL-generation time.
-        var isPrimaryKey: Bool = false {
-            didSet {
-                if isPrimaryKey { isNotNull = true }
-            }
-        }
-    }
-
     static let dataTypes = [
         "INT", "BIGINT", "SMALLINT", "TINYINT", "DECIMAL", "FLOAT", "DOUBLE",
         "VARCHAR", "CHAR", "TEXT", "MEDIUMTEXT", "LONGTEXT",
@@ -115,21 +99,6 @@ final class CreateTableViewModel: ObservableObject {
             && !isSubmitting
     }
 
-    func addColumn() {
-        columns.append(DraftColumn())
-    }
-
-    func removeColumn(_ id: UUID) {
-        columns.removeAll { $0.id == id }
-    }
-
-    func moveColumn(id: UUID, direction: Int) {
-        guard let index = columns.firstIndex(where: { $0.id == id }) else { return }
-        let newIndex = index + direction
-        guard columns.indices.contains(newIndex) else { return }
-        columns.swapAt(index, newIndex)
-    }
-
     /// Builds and runs the `CREATE TABLE` statement; returns the created
     /// table's info on success so the caller can refresh the sidebar and
     /// jump straight to it.
@@ -167,32 +136,10 @@ final class CreateTableViewModel: ObservableObject {
         var primaryKeyColumns: [String] = []
 
         for column in activeColumns {
-            let name = column.name.trimmingCharacters(in: .whitespaces)
-            let quotedName = try SchemaIntrospectionService.quotedIdentifier(name)
-
-            var clause = "\(quotedName) \(column.dataType)"
-
-            if let length = try Self.validatedLength(column.length, columnName: name) {
-                clause += "(\(length))"
-            }
-            if column.isUnsigned {
-                clause += " UNSIGNED"
-            }
-            clause += (column.isPrimaryKey || column.isNotNull) ? " NOT NULL" : " NULL"
-            if column.isAutoIncrement {
-                clause += " AUTO_INCREMENT"
-            }
-            if let defaultClause = Self.defaultClause(for: column.defaultValue) {
-                clause += " \(defaultClause)"
-            }
-            let trimmedComment = column.comment.trimmingCharacters(in: .whitespaces)
-            if !trimmedComment.isEmpty {
-                clause += " COMMENT '\(Self.escapeLiteral(trimmedComment))'"
-            }
-
-            columnClauses.append(clause)
+            columnClauses.append(try column.sqlDefinition())
             if column.isPrimaryKey {
-                primaryKeyColumns.append(quotedName)
+                let name = column.name.trimmingCharacters(in: .whitespaces)
+                primaryKeyColumns.append(try SchemaIntrospectionService.quotedIdentifier(name))
             }
         }
 
@@ -211,32 +158,5 @@ final class CreateTableViewModel: ObservableObject {
         }
 
         return sql
-    }
-
-    /// The length field is spliced into the SQL unquoted (`VARCHAR(255)`,
-    /// `DECIMAL(10,2)`) so — unlike names, which are backtick-escaped, and
-    /// literals, which are quote-escaped — it must be restricted to digits
-    /// and an optional comma up front, or a value like `10); DROP TABLE x;
-    /// --` would inject arbitrary SQL straight into the statement.
-    private static func validatedLength(_ raw: String, columnName: String) throws -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        let isValid = trimmed.allSatisfy { $0.isNumber || $0 == "," } && trimmed.first != "," && trimmed.last != ","
-        guard isValid else { throw CreateTableError.invalidLength(column: columnName, value: trimmed) }
-        return trimmed
-    }
-
-    private static func defaultClause(for raw: String) -> String? {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        let upper = trimmed.uppercased()
-        if upper == "NULL" || upper == "CURRENT_TIMESTAMP" || Double(trimmed) != nil {
-            return "DEFAULT \(trimmed)"
-        }
-        return "DEFAULT '\(escapeLiteral(trimmed))'"
-    }
-
-    private static func escapeLiteral(_ raw: String) -> String {
-        raw.replacingOccurrences(of: "'", with: "''")
     }
 }

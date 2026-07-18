@@ -1,32 +1,37 @@
 import SwiftUI
 
-/// A SQLyog-style "New Table" form, presented as a sheet from the window
-/// toolbar's "Yeni Tablo" button. Reads the live database list off
-/// `schemaTree` (rather than a snapshot) so it stays correct even if the
-/// sidebar hadn't finished loading databases yet when the sheet opened.
-/// The column grid is the shared `DraftColumnsEditor`.
-struct CreateTableView: View {
-    @StateObject private var viewModel: CreateTableViewModel
-    @ObservedObject var schemaTree: SchemaTreeViewModel
+/// The "Alter Table" sheet, opened from a table's context menu in the
+/// sidebar. Same layout as `CreateTableView`, but the column grid arrives
+/// pre-filled with the live schema and the SQL preview shows the *diff* as
+/// a single `ALTER TABLE` statement (or a "no changes" note).
+struct AlterTableView: View {
+    @StateObject private var viewModel: AlterTableViewModel
     @Environment(\.dismiss) private var dismiss
-    let onCreated: (TableInfo) -> Void
+    let onAltered: (TableInfo) -> Void
 
-    init(service: MySQLService, schemaTree: SchemaTreeViewModel, defaultDatabase: String, onCreated: @escaping (TableInfo) -> Void) {
-        _viewModel = StateObject(wrappedValue: CreateTableViewModel(service: service, defaultDatabase: defaultDatabase))
-        self.schemaTree = schemaTree
-        self.onCreated = onCreated
+    init(service: MySQLService, table: TableInfo, onAltered: @escaping (TableInfo) -> Void) {
+        _viewModel = StateObject(wrappedValue: AlterTableViewModel(service: service, table: table))
+        self.onAltered = onAltered
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Yeni Tablo")
+            Text("Alter Table — \(viewModel.originalTableName)")
                 .font(.title2.bold())
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
-                    DraftColumnsEditor(columns: $viewModel.columns, dataTypes: CreateTableViewModel.dataTypes)
-                    sqlPreviewSection
+            if viewModel.isLoading {
+                ProgressView("Tablo yapısı yükleniyor…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        header
+                        DraftColumnsEditor(
+                            columns: $viewModel.columns,
+                            dataTypes: viewModel.availableDataTypes
+                        )
+                        sqlPreviewSection
+                    }
                 }
             }
 
@@ -43,7 +48,7 @@ struct CreateTableView: View {
                 Button {
                     Task {
                         if let table = await viewModel.submit() {
-                            onCreated(table)
+                            onAltered(table)
                             dismiss()
                         }
                     }
@@ -51,7 +56,7 @@ struct CreateTableView: View {
                     if viewModel.isSubmitting {
                         ProgressView().controlSize(.small)
                     } else {
-                        Text("Oluştur")
+                        Text("Uygula")
                     }
                 }
                 .keyboardShortcut(.defaultAction)
@@ -61,7 +66,7 @@ struct CreateTableView: View {
         .padding(24)
         .frame(minWidth: 920, idealWidth: 960, minHeight: 640, idealHeight: 700)
         .task {
-            await viewModel.loadCharsetOptions()
+            await viewModel.load()
         }
     }
 
@@ -69,21 +74,9 @@ struct CreateTableView: View {
         Form {
             TextField("Tablo Adı", text: $viewModel.tableName)
                 .visibleFieldBorder()
-            Picker("Veritabanı", selection: $viewModel.database) {
-                ForEach(schemaTree.databaseNodes) { node in
-                    Text(node.info.name).tag(node.info.name)
-                }
-            }
-            HStack(spacing: 20) {
-                Picker("Engine", selection: $viewModel.engine) {
-                    ForEach(CreateTableViewModel.engines, id: \.self) { Text($0).tag($0) }
-                }
-                Picker("Karakter Seti", selection: $viewModel.charset) {
-                    ForEach(viewModel.charsetOptions, id: \.self) { Text($0).tag($0) }
-                }
-                Picker("Collation", selection: $viewModel.collation) {
-                    ForEach(viewModel.collationOptions, id: \.self) { Text($0).tag($0) }
-                }
+            LabeledContent("Veritabanı") {
+                Text(viewModel.database)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(12)

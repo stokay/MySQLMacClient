@@ -14,4 +14,7 @@ final class SQLInsertionBridge: ObservableObject {
     /// context menu) to be *appended* after the editor's existing content —
     /// unlike `pendingText`, which inserts at the cursor.
     @Published var pendingAppend: String?
+    /// One-shot flag from the sidebar's "İnfo" context-menu action: the
+    /// active grid should load and show its table's text info report.
+    @Published var pendingShowInfo = false
 }

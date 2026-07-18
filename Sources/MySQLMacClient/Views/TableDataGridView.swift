@@ -77,6 +77,15 @@ struct TableDataGridView: View {
                 viewModel.pendingQueryAppend = text
                 insertionBridge.pendingAppend = nil
             }
+            if insertionBridge.pendingShowInfo {
+                insertionBridge.pendingShowInfo = false
+                Task { await viewModel.showTableInfo() }
+            }
+        }
+        .onChange(of: insertionBridge.pendingShowInfo) { _, newValue in
+            guard newValue else { return }
+            insertionBridge.pendingShowInfo = false
+            Task { await viewModel.showTableInfo() }
         }
     }
 
@@ -121,7 +130,7 @@ struct TableDataGridView: View {
 
             Divider()
 
-            if !viewModel.hasPrimaryKey && !viewModel.isLoading && !viewModel.isShowingQueryResult {
+            if !viewModel.hasPrimaryKey && !viewModel.isLoading && !viewModel.isShowingQueryResult && viewModel.tableInfoText == nil {
                 Label("Bu tabloda primary key yok, düzenleme kapalı.", systemImage: "exclamationmark.triangle.fill")
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -136,7 +145,16 @@ struct TableDataGridView: View {
                     .background(Color.red.opacity(0.1))
             }
 
-            if viewModel.isLoading && viewModel.rows.isEmpty {
+            if let infoText = viewModel.tableInfoText {
+                ScrollView([.vertical, .horizontal]) {
+                    Text(infoText)
+                        .font(.system(size: 12, design: .monospaced))
+                        .textSelection(.enabled)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .background(Color(nsColor: .textBackgroundColor))
+            } else if viewModel.isLoading && viewModel.rows.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.isShowingQueryResult {
@@ -160,6 +178,33 @@ struct TableDataGridView: View {
 
     private var gridToolbar: some View {
         HStack(spacing: 8) {
+            if viewModel.tableInfoText != nil {
+                // Info report mode: the whole toolbar reduces to the way
+                // back — the report is read-only, so the edit/refresh/query
+                // controls would all be dead weight next to it.
+                Button {
+                    viewModel.tableInfoText = nil
+                } label: {
+                    Label("Tablo Görünümüne Dön", systemImage: "tablecells")
+                }
+
+                Text("İnfo — \(viewModel.tableName)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+            } else {
+                regularToolbarContent
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    @ViewBuilder
+    private var regularToolbarContent: some View {
+        Group {
             Button {
                 viewModel.toggleQueryPanel()
             } label: {
@@ -188,8 +233,5 @@ struct TableDataGridView: View {
                 Spacer()
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color(nsColor: .controlBackgroundColor))
     }
 }
