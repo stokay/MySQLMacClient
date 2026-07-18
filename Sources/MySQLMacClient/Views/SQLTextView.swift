@@ -78,6 +78,9 @@ final class SQLEditorUndoProxy: ObservableObject {
 
 struct SQLTextView: NSViewRepresentable {
     let undoProxy: SQLEditorUndoProxy
+    /// Observed so settings changes re-invoke `updateNSView` (font, ruler
+    /// visibility, syntax re-highlight).
+    @EnvironmentObject private var settingsStore: SettingsStore
     @Binding var text: String
     /// One-shot signal: when set, its text is inserted at the *current*
     /// cursor position (double-clicking a table/column in the sidebar sets
@@ -105,9 +108,21 @@ struct SQLTextView: NSViewRepresentable {
         "truncate", "replace", "use", "column", "add", "modify", "change", "if",
     ]
 
-    static let keywordColor = NSColor.systemBlue
-    static let stringLiteralColor = NSColor.systemGreen
-    static let commentColor = NSColor.systemGray
+    // Settings-driven: dynamic providers re-read the stored hex on every
+    // draw (see `NSColor.settingsColor`).
+    static let keywordColor = NSColor.settingsColor({ $0.editor.keywordColor }, fallback: .systemBlue)
+    static let stringLiteralColor = NSColor.settingsColor({ $0.editor.stringColor }, fallback: .systemGreen)
+    static let commentColor = NSColor.settingsColor({ $0.editor.commentColor }, fallback: .systemGray)
+
+    @MainActor
+    static var editorFont: NSFont {
+        .monospacedSystemFont(ofSize: CGFloat(SettingsStore.shared.settings.editor.fontSize), weight: .regular)
+    }
+
+    @MainActor
+    static var editorBoldFont: NSFont {
+        .monospacedSystemFont(ofSize: CGFloat(SettingsStore.shared.settings.editor.fontSize), weight: .bold)
+    }
 
     private static let keywordRegex = try! NSRegularExpression(
         pattern: #"\b(\#(keywords.joined(separator: "|")))\b"#,
@@ -119,7 +134,7 @@ struct SQLTextView: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let textView = NSTextView()
         textView.delegate = context.coordinator
-        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.font = Self.editorFont
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
@@ -138,7 +153,7 @@ struct SQLTextView: NSViewRepresentable {
         let rulerView = LineNumberRulerView(textView: textView, scrollView: scrollView)
         scrollView.verticalRulerView = rulerView
         scrollView.hasVerticalRuler = true
-        scrollView.rulersVisible = true
+        scrollView.rulersVisible = settingsStore.settings.editor.showLineNumbers
 
         context.coordinator.textView = textView
         context.coordinator.rulerView = rulerView
@@ -165,6 +180,18 @@ struct SQLTextView: NSViewRepresentable {
     /// `pendingInsertion` is already `nil`.
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = context.coordinator.textView else { return }
+
+        // Applied only when the editor settings actually changed — this
+        // method also runs on every keystroke, and re-fonting/highlighting
+        // unconditionally would be wasted work (and would fight the
+        // field's own typing pipeline).
+        let editorSettings = settingsStore.settings.editor
+        if context.coordinator.lastAppliedEditorSettings != editorSettings {
+            context.coordinator.lastAppliedEditorSettings = editorSettings
+            textView.font = Self.editorFont
+            nsView.rulersVisible = editorSettings.showLineNumbers
+            context.coordinator.highlight(textView)
+        }
 
         if let insertion = pendingInsertion {
             pendingInsertion = nil
@@ -218,6 +245,10 @@ struct SQLTextView: NSViewRepresentable {
         let selectedText: Binding<String?>
         weak var textView: NSTextView?
         weak var rulerView: LineNumberRulerView?
+        /// Fingerprint of the last editor settings applied to the text
+        /// view, so `updateNSView` only re-fonts/re-highlights on actual
+        /// settings changes (it also runs on every keystroke).
+        var lastAppliedEditorSettings = SettingsStore.shared.settings.editor
 
         /// The editor's own isolated undo stack, handed to the text view
         /// via the `undoManager(for:)` delegate method below.
@@ -240,7 +271,9 @@ struct SQLTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView, !isApplyingKeywordCase else { return }
-            uppercaseKeywords(in: textView)
+            if SettingsStore.shared.settings.editor.autoUppercaseKeywords {
+                uppercaseKeywords(in: textView)
+            }
             text.wrappedValue = textView.string
             highlight(textView)
         }
@@ -300,12 +333,12 @@ struct SQLTextView: NSViewRepresentable {
 
             storage.beginEditing()
             storage.setAttributes(
-                [.font: NSFont.monospacedSystemFont(ofSize: 13, weight: .regular), .foregroundColor: NSColor.labelColor],
+                [.font: SQLTextView.editorFont, .foregroundColor: NSColor.labelColor],
                 range: fullRange
             )
             for match in SQLTextView.keywordRegex.matches(in: string, range: fullRange) {
                 storage.addAttributes(
-                    [.foregroundColor: SQLTextView.keywordColor, .font: NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)],
+                    [.foregroundColor: SQLTextView.keywordColor, .font: SQLTextView.editorBoldFont],
                     range: match.range
                 )
             }

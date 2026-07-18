@@ -6,6 +6,7 @@ import SwiftUI
 struct QueryPanelView: View {
     @ObservedObject var viewModel: TableDataViewModel
     @StateObject private var undoProxy = SQLEditorUndoProxy()
+    @EnvironmentObject private var settingsStore: SettingsStore
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -38,9 +39,12 @@ struct QueryPanelView: View {
     /// user manually dragged it. Using `.opacity` instead of removing the
     /// view keeps the reserved height constant either way.
     private var statusRow: some View {
+        // Error color and font size come from the Ayarlar window; the
+        // dynamic NSColor resolves the light/dark hex per current theme.
+        let errorColor = Color(nsColor: .settingsColor({ $0.editor.errorColor }, fallback: .systemRed))
         let (message, icon, color): (String, String, Color) = {
             if let errorMessage = viewModel.queryErrorMessage {
-                return (errorMessage, "xmark.octagon.fill", .red)
+                return (errorMessage, "xmark.octagon.fill", errorColor)
             } else if let note = viewModel.queryResultEditabilityNote {
                 return (note, "exclamationmark.triangle.fill", .orange)
             } else if let message = viewModel.queryMessage {
@@ -51,7 +55,7 @@ struct QueryPanelView: View {
         }()
 
         return Label(message, systemImage: icon)
-            .font(.system(size: 13))
+            .font(.system(size: CGFloat(settingsStore.settings.editor.statusFontSize)))
             .foregroundStyle(color)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)

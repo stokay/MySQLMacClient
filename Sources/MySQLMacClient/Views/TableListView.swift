@@ -86,8 +86,15 @@ private struct RowHeader: View {
     var onToggle: (() -> Void)? = nil
     var onSelect: (() -> Void)? = nil
     var onDoubleClick: (() -> Void)? = nil
+    /// All row typography derives from the sidebar settings' single font
+    /// size (secondary text one point smaller, chevron three smaller), so
+    /// one slider scales the whole tree coherently.
+    @EnvironmentObject private var settingsStore: SettingsStore
 
     var body: some View {
+        let fontSize = CGFloat(settingsStore.settings.sidebar.fontSize)
+        let verticalPadding = CGFloat(settingsStore.settings.sidebar.rowVerticalPadding)
+
         HStack(spacing: 5) {
             Group {
                 if isExpandable {
@@ -99,31 +106,31 @@ private struct RowHeader: View {
                     Color.clear
                 }
             }
-            .font(.system(size: 10, weight: .semibold))
+            .font(.system(size: max(8, fontSize - 3), weight: .semibold))
             .foregroundStyle(.secondary)
             .frame(width: 12, height: 16)
 
             Image(systemName: systemImage)
-                .font(.system(size: 13))
+                .font(.system(size: fontSize))
                 .foregroundStyle(iconColor)
-                .frame(width: 16)
+                .frame(width: fontSize + 3)
 
             Text(title)
-                .font(.system(size: 13))
+                .font(.system(size: fontSize))
                 .lineLimit(1)
 
             Spacer(minLength: 4)
 
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 12))
+                    .font(.system(size: max(9, fontSize - 1)))
                     .foregroundStyle(isSelected ? Color.white.opacity(0.8) : .secondary)
                     .lineLimit(1)
             }
         }
         .padding(.leading, indent)
         .padding(.trailing, 8)
-        .padding(.vertical, 4)
+        .padding(.vertical, verticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
         .foregroundStyle(isSelected ? Color.white : Color.primary)
@@ -186,7 +193,7 @@ private struct CategoryRow<Item: Identifiable, RowContent: View>: View {
 
     private func placeholder(_ text: String, color: Color = .secondary) -> some View {
         Text(text)
-            .font(.system(size: 12))
+            .font(.system(size: max(9, CGFloat(SettingsStore.shared.settings.sidebar.fontSize) - 1)))
             .foregroundStyle(color)
             .padding(.leading, indent + 26)
             .padding(.vertical, 2)

@@ -14,6 +14,9 @@ import AppKit
 /// query results grid (`QueryResultGridView`) reuses the same look.
 struct SpreadsheetGridView: NSViewRepresentable {
     @ObservedObject var viewModel: TableDataViewModel
+    /// Observed so any settings change re-invokes `updateNSView`, which
+    /// applies row height/fonts and reloads cells with the new styling.
+    @EnvironmentObject private var settingsStore: SettingsStore
 
     func makeNSView(context: Context) -> NSScrollView {
         let tableView = NSTableView()
@@ -22,7 +25,7 @@ struct SpreadsheetGridView: NSViewRepresentable {
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
         tableView.gridColor = .gridLineColor
         tableView.intercellSpacing = NSSize(width: 1, height: 1)
-        tableView.rowHeight = 20
+        tableView.rowHeight = CGFloat(settingsStore.settings.grid.rowHeight)
         tableView.headerView = NSTableHeaderView()
         tableView.dataSource = context.coordinator
         tableView.delegate = context.coordinator
@@ -42,6 +45,10 @@ struct SpreadsheetGridView: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         context.coordinator.viewModel = viewModel
+        if let tableView = context.coordinator.tableView {
+            tableView.rowHeight = CGFloat(settingsStore.settings.grid.rowHeight)
+            tableView.headerView?.needsDisplay = true
+        }
         context.coordinator.rebuildColumnsIfNeeded()
         context.coordinator.refreshHeaderTitles()
         context.coordinator.reloadPreservingActiveEdit()
@@ -218,7 +225,7 @@ struct SpreadsheetGridView: NSViewRepresentable {
             textField.isBordered = false
             textField.drawsBackground = false
             textField.isEditable = viewModel.hasPrimaryKey
-            textField.font = .systemFont(ofSize: 12)
+            textField.font = .systemFont(ofSize: CGFloat(SettingsStore.shared.settings.grid.cellFontSize))
             applyGridTextColor(to: textField, isSelected: tableView.selectedRowIndexes.contains(row))
             textField.delegate = self
             textField.identifier = NSUserInterfaceItemIdentifier("\(row)|\(columnName)")

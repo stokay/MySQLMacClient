@@ -64,12 +64,24 @@ final class TableDataViewModel: ObservableObject {
     private let service: MySQLService
     private let introspection: SchemaIntrospectionService
     private var primaryKeyColumns: [String] = []
+    private let defaultSelectLimit: Int
 
-    init(databaseName: String, tableName: String, service: MySQLService, introspection: SchemaIntrospectionService) {
+    /// `pageSize`/`defaultSelectLimit` default to the persisted settings;
+    /// tests pass explicit values and never touch the singleton.
+    init(
+        databaseName: String,
+        tableName: String,
+        service: MySQLService,
+        introspection: SchemaIntrospectionService,
+        pageSize: Int = SettingsStore.shared.settings.grid.defaultPageSize,
+        defaultSelectLimit: Int = SettingsStore.shared.settings.editor.defaultSelectLimit
+    ) {
         self.databaseName = databaseName
         self.tableName = tableName
         self.service = service
         self.introspection = introspection
+        self.pageSize = pageSize
+        self.defaultSelectLimit = defaultSelectLimit
     }
 
     func load() async {
@@ -373,7 +385,7 @@ final class TableDataViewModel: ObservableObject {
     func toggleQueryPanel() {
         isQueryPanelVisible.toggle()
         if isQueryPanelVisible, queryText.isEmpty, let qualified = try? qualifiedTable() {
-            queryText = "SELECT * FROM \(qualified) LIMIT 1000;"
+            queryText = "SELECT * FROM \(qualified) LIMIT \(defaultSelectLimit);"
         }
     }
 

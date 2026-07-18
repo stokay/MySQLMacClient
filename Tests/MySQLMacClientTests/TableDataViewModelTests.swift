@@ -226,6 +226,24 @@ final class TableDataViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.queryResultRows.map { $0.originalValues["name"]?.displayString }, ["Nut"])
     }
 
+    func testExplicitPageSizeAndSelectLimitOverridesFlowThrough() async throws {
+        let viewModel = TableDataViewModel(
+            databaseName: "mysqlmacclient_test",
+            tableName: "widgets",
+            service: service,
+            introspection: introspection,
+            pageSize: 2,
+            defaultSelectLimit: 77
+        )
+        await viewModel.load()
+
+        XCTAssertEqual(viewModel.rows.count, 2, "pageSize LIMIT cümlesine yansımalı")
+        XCTAssertEqual(viewModel.totalRowCount, 3)
+
+        viewModel.toggleQueryPanel()
+        XCTAssertTrue(viewModel.queryText.contains("LIMIT 77;"), "varsayılan sorgu şablonu ayarı kullanmalı: \(viewModel.queryText)")
+    }
+
     func testShowTableInfoBuildsTextReportFromLiveSchema() async throws {
         let viewModel = TableDataViewModel(databaseName: "mysqlmacclient_test", tableName: "widgets", service: service, introspection: introspection)
         await viewModel.load()

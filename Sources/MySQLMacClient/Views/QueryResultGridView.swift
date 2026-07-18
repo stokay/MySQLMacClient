@@ -14,6 +14,8 @@ struct QueryResultGridView: NSViewRepresentable {
     let isEditable: Bool
     let onCommitEdit: (TableRow.ID, String, String) -> Void
     let onDeleteRow: (TableRow) -> Void
+    /// See `SpreadsheetGridView` — settings changes re-invoke `updateNSView`.
+    @EnvironmentObject private var settingsStore: SettingsStore
 
     func makeNSView(context: Context) -> NSScrollView {
         let tableView = NSTableView()
@@ -22,7 +24,7 @@ struct QueryResultGridView: NSViewRepresentable {
         tableView.gridStyleMask = [.solidHorizontalGridLineMask, .solidVerticalGridLineMask]
         tableView.gridColor = .gridLineColor
         tableView.intercellSpacing = NSSize(width: 1, height: 1)
-        tableView.rowHeight = 20
+        tableView.rowHeight = CGFloat(settingsStore.settings.grid.rowHeight)
         tableView.headerView = NSTableHeaderView()
         tableView.dataSource = context.coordinator
         tableView.delegate = context.coordinator
@@ -46,6 +48,10 @@ struct QueryResultGridView: NSViewRepresentable {
         context.coordinator.isEditable = isEditable
         context.coordinator.onCommitEdit = onCommitEdit
         context.coordinator.onDeleteRow = onDeleteRow
+        if let tableView = context.coordinator.tableView {
+            tableView.rowHeight = CGFloat(settingsStore.settings.grid.rowHeight)
+            tableView.headerView?.needsDisplay = true
+        }
         context.coordinator.rebuildColumnsIfNeeded(columnNames: columnNames, isEditable: isEditable)
         context.coordinator.reloadPreservingActiveEdit()
     }
@@ -192,7 +198,7 @@ struct QueryResultGridView: NSViewRepresentable {
             textField.isBordered = false
             textField.drawsBackground = false
             textField.isEditable = isEditable
-            textField.font = .systemFont(ofSize: 12)
+            textField.font = .systemFont(ofSize: CGFloat(SettingsStore.shared.settings.grid.cellFontSize))
             applyGridTextColor(to: textField, isSelected: tableView.selectedRowIndexes.contains(row))
             textField.delegate = isEditable ? self : nil
             textField.identifier = NSUserInterfaceItemIdentifier("\(row)|\(columnName)")

@@ -92,6 +92,19 @@ struct MainWindowView: View {
                 }
                 .help("Yeni Tablo Oluştur")
             }
+            ToolbarItem(placement: .navigation) {
+                SettingsLink {
+                    Label {
+                        Text("Ayarlar")
+                    } icon: {
+                        Image.bundled("settings", fallbackSystemImage: "gearshape")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 30, height: 30)
+                    }
+                }
+                .help("Ayarlar (⌘,)")
+            }
         }
         .sheet(isPresented: $isShowingCreateTable) {
             CreateTableView(

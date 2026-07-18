@@ -12,7 +12,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        NSApp.windows.first?.makeKeyAndOrderFront(nil)
+        // Only when nothing is key yet (the launch case) — unconditionally
+        // fronting the first window here would yank focus away from the
+        // Ayarlar window on every app re-activation.
+        if NSApp.keyWindow == nil {
+            NSApp.windows.first?.makeKeyAndOrderFront(nil)
+        }
     }
 }
 
@@ -22,6 +27,9 @@ struct MySQLMacClientApp: App {
     @StateObject private var connectionStore = ConnectionStore()
     @StateObject private var appState = AppState()
     @StateObject private var appearanceStore = AppearanceStore()
+    /// Wraps the shared singleton (AppKit drawing code reads
+    /// `SettingsStore.shared` directly), observed here so SwiftUI reacts.
+    @StateObject private var settingsStore = SettingsStore.shared
 
     var body: some Scene {
         WindowGroup {
@@ -36,6 +44,7 @@ struct MySQLMacClientApp: App {
             }
             .frame(minWidth: 800, minHeight: 560)
             .environmentObject(appearanceStore)
+            .environmentObject(settingsStore)
             .preferredColorScheme(appearanceStore.mode.colorScheme)
             .toolbar {
                 // Placed at the app root (not inside MainWindowView) so it
@@ -59,6 +68,15 @@ struct MySQLMacClientApp: App {
                     .help("Yeni Bağlantı")
                 }
             }
+        }
+
+        // Environment/appearance must be re-attached here — a `Settings`
+        // scene does not inherit the WindowGroup's modifiers.
+        Settings {
+            SettingsView()
+                .environmentObject(appearanceStore)
+                .environmentObject(settingsStore)
+                .preferredColorScheme(appearanceStore.mode.colorScheme)
         }
     }
 }
