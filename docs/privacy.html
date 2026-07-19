@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MySQL Mac Client — Privacy Policy</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #2f81f7;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      padding: 2rem 1rem;
+    }
+    .wrapper {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 2.5rem;
+    }
+    header img {
+      width: 56px;
+      height: 56px;
+      border-radius: 12px;
+    }
+    header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    header p {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--accent);
+      margin: 2rem 0 0.75rem;
+    }
+    p, li {
+      font-size: 0.97rem;
+      color: var(--text);
+    }
+    ul {
+      padding-left: 1.5rem;
+    }
+    li { margin-bottom: 0.4rem; }
+    .highlight {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin: 1.5rem 0;
+    }
+    .highlight strong { color: #3fb950; }
+    footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <header>
+      <div>
+        <h1>MySQL Mac Client</h1>
+        <p>Privacy Policy · Last updated: July 2025</p>
+      </div>
+    </header>
+
+    <div class="highlight">
+      <strong>Short version:</strong> MySQL Mac Client does not collect, store, or transmit any personal data to any server. All data stays on your Mac.
+    </div>
+
+    <h2>1. Information We Collect</h2>
+    <p>MySQL Mac Client does <strong>not</strong> collect any personal information. Specifically:</p>
+    <ul>
+      <li>No analytics or telemetry data is collected</li>
+      <li>No usage data is sent to any external server</li>
+      <li>No advertising identifiers are used</li>
+      <li>No crash reports are automatically uploaded</li>
+    </ul>
+
+    <h2>2. Data Stored Locally on Your Mac</h2>
+    <p>The app stores the following data <strong>exclusively on your device</strong>:</p>
+    <ul>
+      <li><strong>Connection profiles</strong> (host, port, username, database name): stored in <code>~/Library/Application Support/MySQLMacClient/connections.json</code></li>
+      <li><strong>Passwords</strong>: stored securely in the macOS Keychain — never written to disk in plaintext</li>
+      <li><strong>App preferences</strong> (theme, grid settings, editor font size): stored in the app's sandbox container</li>
+    </ul>
+
+    <h2>3. Network Access</h2>
+    <p>The app makes outgoing TCP connections <strong>only</strong> to the MySQL servers you explicitly configure. No connections are made to any servers operated by the developer.</p>
+
+    <h2>4. Third-Party Services</h2>
+    <p>MySQL Mac Client does not integrate any third-party SDKs, analytics services, advertising networks, or crash reporting frameworks.</p>
+
+    <h2>5. Children's Privacy</h2>
+    <p>This app is not directed to children under 13. No information is collected from any user.</p>
+
+    <h2>6. Changes to This Policy</h2>
+    <p>If this privacy policy changes, the updated version will be posted at this URL. The "Last updated" date at the top of this page will reflect the change.</p>
+
+    <h2>7. Contact</h2>
+    <p>Questions about this privacy policy? Open an issue on <a href="https://github.com/stokay/MySQLMacClient" target="_blank">GitHub</a>.</p>
+
+    <footer>
+      <p>© 2025 Sedat Tokay · <a href="https://github.com/stokay/MySQLMacClient">GitHub</a></p>
+    </footer>
+  </div>
+</body>
+</html>

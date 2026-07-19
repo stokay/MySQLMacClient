@@ -1,0 +1,26 @@
+// MySQLMacClient — Xcode Build Configuration
+// Xcode'da Package.swift açıldığında bu dosyayı:
+//   Project → MySQLMacClient → Info → Configurations → Debug/Release'e atayın.
+// Veya scheme edit → Build → Pre-actions altında da referans verilebilir.
+
+PRODUCT_BUNDLE_IDENTIFIER = com.sedattokay.MySQLMacClient
+PRODUCT_NAME = MySQLMacClient
+MARKETING_VERSION = 1.0.0
+CURRENT_PROJECT_VERSION = 1
+
+MACOSX_DEPLOYMENT_TARGET = 15.0
+
+// App Store signing — Xcode'da "Automatically manage signing" açıkken
+// DEVELOPMENT_TEAM satırı yeterlidir. Team ID'nizi buraya girin:
+// DEVELOPMENT_TEAM = XXXXXXXXXX
+
+// Entitlements — App Sandbox + ağ erişimi
+CODE_SIGN_ENTITLEMENTS = MySQLMacClient.entitlements
+
+// App Store submission
+CODE_SIGN_STYLE = Automatic
+ENABLE_HARDENED_RUNTIME = YES
+
+// Assets
+ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+COMBINE_HIDPI_IMAGES = YES

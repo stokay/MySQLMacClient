@@ -1,14 +1,13 @@
 import SwiftUI
 import AppKit
 
-/// A bare SPM executable has no Info.plist/app bundle, so without this the
-/// process never becomes a proper foreground app: its window can be drawn
-/// and clicked, but keyboard focus stays with whatever app was frontmost
-/// before it launched (e.g. the IDE), and keystrokes leak there instead.
+/// Manages app lifecycle. When running as a proper .app bundle (App Store build)
+/// activation policy is handled by the bundle's Info.plist automatically.
+/// applicationDidBecomeActive still handles the window-focus edge case.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        // No manual activation needed for a bundled .app — Info.plist handles it.
+        // (Previously needed for bare SPM executable builds.)
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
