@@ -73,15 +73,18 @@ final class TableDataViewModel: ObservableObject {
         tableName: String,
         service: MySQLService,
         introspection: SchemaIntrospectionService,
-        pageSize: Int = SettingsStore.shared.settings.grid.defaultPageSize,
-        defaultSelectLimit: Int = SettingsStore.shared.settings.editor.defaultSelectLimit
+        pageSize: Int? = nil,
+        defaultSelectLimit: Int? = nil
     ) {
         self.databaseName = databaseName
         self.tableName = tableName
         self.service = service
         self.introspection = introspection
-        self.pageSize = pageSize
-        self.defaultSelectLimit = defaultSelectLimit
+        // Resolve defaults here (inside @MainActor context) rather than as
+        // default parameter values — Swift 6 strict concurrency forbids
+        // referencing @MainActor-isolated properties in default parameters.
+        self.pageSize = pageSize ?? SettingsStore.shared.settings.grid.defaultPageSize
+        self.defaultSelectLimit = defaultSelectLimit ?? SettingsStore.shared.settings.editor.defaultSelectLimit
     }
 
     func load() async {

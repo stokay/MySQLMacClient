@@ -1,0 +1,97 @@
+name: MySQLMacClient
+options:
+  bundleIdPrefix: com.sedattokay
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+packages:
+  mysql-nio:
+    url: https://github.com/vapor/mysql-nio.git
+    from: 1.9.1
+
+targets:
+  MySQLMacClient:
+    type: application
+    platform: macOS
+    deploymentTarget: "15.0"
+    sources:
+      - Sources/MySQLMacClient
+      # .xcassets in sources gets compiled into Assets.car by Xcode —
+      # `assets:` is not a valid XcodeGen key, which is why the first
+      # upload shipped without an asset catalog (ITMS-90546).
+      - Assets.xcassets
+    resources:
+      - path: Sources/MySQLMacClient/Resources
+        type: copy
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDisplayName: "MySQL Mac Client"
+        CFBundleShortVersionString: "1.0.0"
+        CFBundleVersion: "2"
+        LSApplicationCategoryType: "public.app-category.developer-tools"
+        CFBundleIconName: AppIcon
+        NSHumanReadableCopyright: "Copyright © 2025 Sedat Tokay. All rights reserved."
+        # Muaf olmayan şifreleme yok — App Store Connect'in her build'de
+        # sorduğu ihracat beyanını kalıcı olarak cevaplar.
+        ITSAppUsesNonExemptEncryption: false
+    # XcodeGen bu dosyayı properties'ten ÜRETİR — izinler burada durmalı;
+    # dosyayı elle düzenlemek bir sonraki generate'te kaybolur.
+    entitlements:
+      path: MySQLMacClient.entitlements
+      properties:
+        # App Store'daki tüm macOS uygulamaları için zorunlu.
+        com.apple.security.app-sandbox: true
+        # Dışarıya TCP (MySQL sunucularına bağlantı) — sandbox altında bu
+        # izin olmadan hiçbir bağlantı kurulamaz.
+        com.apple.security.network.client: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sedattokay.MySQLMacClient
+        # Gerçek Team ID (sertifikanın OU alanı) — CN'deki parantez içi
+        # (UR6S53DFBX) kişisel kimliktir, takım kimliği değildir.
+        DEVELOPMENT_TEAM: 848JB749D8
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "2"
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    # Belt-and-braces for ITMS-91109: strips quarantine/metadata xattrs
+    # from everything inside the built .app before Xcode signs it, so a
+    # freshly-downloaded icon can never poison an archive again.
+    postBuildScripts:
+      - name: Strip extended attributes
+        script: |
+          xattr -cr "${TARGET_BUILD_DIR}/${FULL_PRODUCT_NAME}" || true
+        basedOnDependencyAnalysis: false
+    dependencies:
+      - package: mysql-nio
+        product: MySQLNIO
+
+  MySQLMacClientTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests/MySQLMacClientTests
+    dependencies:
+      - target: MySQLMacClient
+
+schemes:
+  MySQLMacClient:
+    build:
+      targets:
+        MySQLMacClient: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - MySQLMacClientTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
