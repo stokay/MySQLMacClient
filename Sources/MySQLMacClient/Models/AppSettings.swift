@@ -92,6 +92,20 @@ struct AppSettings: Codable, Equatable {
         }
     }
 
+    /// The "İnfo" text report shown in place of the grid.
+    struct Info: Codable, Equatable {
+        var fontSize: Double = 12
+        var textColor = AdaptiveColorSetting(light: "#1d1d1f", dark: "#e8e8e8")
+
+        init() {}
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            let defaults = Info()
+            fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? defaults.fontSize
+            textColor = try container.decodeIfPresent(AdaptiveColorSetting.self, forKey: .textColor) ?? defaults.textColor
+        }
+    }
+
     /// Sidebar schema tree (Tree view).
     struct Sidebar: Codable, Equatable {
         var fontSize: Double = 13
@@ -111,6 +125,7 @@ struct AppSettings: Codable, Equatable {
     var grid = Grid()
     var editor = Editor()
     var sidebar = Sidebar()
+    var info = Info()
 
     init() {}
     init(from decoder: Decoder) throws {
@@ -119,6 +134,7 @@ struct AppSettings: Codable, Equatable {
         grid = try container.decodeIfPresent(Grid.self, forKey: .grid) ?? Grid()
         editor = try container.decodeIfPresent(Editor.self, forKey: .editor) ?? Editor()
         sidebar = try container.decodeIfPresent(Sidebar.self, forKey: .sidebar) ?? Sidebar()
+        info = try container.decodeIfPresent(Info.self, forKey: .info) ?? Info()
     }
 
     static let defaults = AppSettings()

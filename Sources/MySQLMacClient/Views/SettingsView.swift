@@ -74,6 +74,13 @@ struct SettingsView: View {
             adaptiveColorRow("Seçili satır zemin rengi", \.grid.selectedRowBackground)
             adaptiveColorRow("Seçili satır yazı rengi", \.grid.selectedRowText)
 
+            Divider().padding(.vertical, 4)
+
+            Text("İnfo Görünümü")
+                .font(.headline)
+            sizeStepper("Yazı boyutu", value: $settingsStore.settings.info.fontSize, range: 9...20)
+            adaptiveColorRow("Yazı rengi", \.info.textColor)
+
             resetSection
         }
         .padding(16)

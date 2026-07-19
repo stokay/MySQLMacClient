@@ -15,11 +15,16 @@ import SwiftUI
 struct TableDataGridView: View {
     @StateObject private var viewModel: TableDataViewModel
     @ObservedObject var insertionBridge: SQLInsertionBridge
+    /// For the İnfo report's font size/color (live-updating).
+    @EnvironmentObject private var settingsStore: SettingsStore
 
     private static let minPanelHeight: CGFloat = 180
     private static let minGridHeight: CGFloat = 150
     @State private var queryPanelHeight: CGFloat = Self.minPanelHeight
     @State private var dragStartHeight: CGFloat?
+    /// Grid (default) vs. mysql-CLI-style aligned text rendering of the
+    /// same rows — toggled by the two leftmost toolbar buttons.
+    @State private var isTextViewMode = false
 
     init(
         databaseName: String,
@@ -148,7 +153,8 @@ struct TableDataGridView: View {
             if let infoText = viewModel.tableInfoText {
                 ScrollView([.vertical, .horizontal]) {
                     Text(infoText)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(.system(size: CGFloat(settingsStore.settings.info.fontSize), design: .monospaced))
+                        .foregroundStyle(Color(nsColor: .settingsColor({ $0.info.textColor }, fallback: .labelColor)))
                         .textSelection(.enabled)
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -157,6 +163,8 @@ struct TableDataGridView: View {
             } else if viewModel.isLoading && viewModel.rows.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if isTextViewMode {
+                textualRowsView
             } else if viewModel.isShowingQueryResult {
                 QueryResultGridView(
                     columnNames: viewModel.queryResultColumns,
@@ -202,9 +210,69 @@ struct TableDataGridView: View {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
+    /// The current rows (main table or query result — whichever is on
+    /// screen) rendered as the same aligned plain-text table the İnfo
+    /// report uses. Font/size follow the SQL editor settings, per spec.
+    private var textualRowsView: some View {
+        let headers: [String]
+        let rows: [[String]]
+        if viewModel.isShowingQueryResult {
+            headers = viewModel.queryResultColumns
+            rows = viewModel.queryResultRows.map { row in headers.map { row.editedText[$0] ?? "" } }
+        } else {
+            headers = viewModel.columns.map(\.name)
+            rows = viewModel.rows.map { row in headers.map { row.editedText[$0] ?? "" } }
+        }
+
+        return ScrollView([.vertical, .horizontal]) {
+            Text(TableInfoReport.textTable(headers: headers, rows: rows))
+                .font(.system(size: CGFloat(settingsStore.settings.editor.fontSize), design: .monospaced))
+                .textSelection(.enabled)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    private func viewModeButton(icon: String, fallbackSystemImage: String, help: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image.bundled(icon, fallbackSystemImage: fallbackSystemImage)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.plain)
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 5).fill(isActive ? Color.accentColor.opacity(0.22) : Color.clear))
+        .overlay(RoundedRectangle(cornerRadius: 5).stroke(isActive ? Color.accentColor : Color.clear))
+        // The inactive mode's icon reads as "disabled" (dimmed) but stays
+        // clickable — that's the switch.
+        .opacity(isActive ? 1 : 0.45)
+        .help(help)
+    }
+
     @ViewBuilder
     private var regularToolbarContent: some View {
         Group {
+            viewModeButton(
+                icon: "grid_view",
+                fallbackSystemImage: "tablecells",
+                help: "Izgara Görünümü",
+                isActive: !isTextViewMode
+            ) {
+                isTextViewMode = false
+            }
+            viewModeButton(
+                icon: "text_view",
+                fallbackSystemImage: "text.justify.left",
+                help: "Metin Görünümü",
+                isActive: isTextViewMode
+            ) {
+                isTextViewMode = true
+            }
+
+            Divider().frame(height: 16)
+
             Button {
                 viewModel.toggleQueryPanel()
             } label: {

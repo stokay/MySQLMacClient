@@ -27,6 +27,17 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.settings.sidebar.fontSize, 13)
         XCTAssertEqual(store.settings.sidebar.rowVerticalPadding, 4)
         XCTAssertEqual(store.settings.editor.statusFontSize, 13)
+        XCTAssertEqual(store.settings.info.fontSize, 12)
+    }
+
+    func testInfoSettingsPersist() {
+        let store = SettingsStore(fileURL: tempFileURL)
+        store.settings.info.fontSize = 14
+        store.settings.info.textColor.dark = "#ffffff"
+
+        let reloaded = SettingsStore(fileURL: tempFileURL)
+        XCTAssertEqual(reloaded.settings.info.fontSize, 14)
+        XCTAssertEqual(reloaded.settings.info.textColor.dark, "#ffffff")
     }
 
     func testSidebarAndStatusSettingsPersist() {
