@@ -9,12 +9,12 @@ A native macOS MySQL management tool built with **Swift 6 / SwiftUI**, inspired 
 ## Screenshots
 
 <p align="center">
-  <img src="Sources/MySQLMacClient/Resources/new_connection_01.png" alt="Connection Form" width="420" />
-  <img src="Sources/MySQLMacClient/Resources/grid_view.png" alt="Data Grid" width="420" />
+  <img src="docs/screenshots/general-light.png" alt="Main Window — Light Mode" width="420" />
+  <img src="docs/screenshots/general-dark.png" alt="Main Window — Dark Mode" width="420" />
 </p>
 <p align="center">
-  <img src="Sources/MySQLMacClient/Resources/settings.png" alt="Settings" width="420" />
-  <img src="Sources/MySQLMacClient/Resources/create_table.png" alt="Create Table" width="420" />
+  <img src="docs/screenshots/new-table.png" alt="Create Table" width="420" />
+  <img src="docs/screenshots/alter-table.png" alt="Alter Table" width="420" />
 </p>
 
 ---
