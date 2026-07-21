@@ -38,6 +38,21 @@ enum RowValue: Equatable, Hashable {
         }
     }
 
+    /// Bind-ready encoding for writing this value back to MySQL — shared by
+    /// the main grid and the query-result grid, both of which rebuild a
+    /// row's original values into a `WHERE` clause via
+    /// `primaryKeyWhereClause(for:primaryKeyColumns:)`.
+    var mysqlData: MySQLData {
+        switch self {
+        case .null: return .null
+        case .int(let value): return MySQLData(string: String(value))
+        case .double(let value): return MySQLData(string: String(value))
+        case .string(let value): return MySQLData(string: value)
+        case .date(let value): return MySQLData(string: RowValue.dateFormatter.string(from: value))
+        case .blob(let value): return MySQLData(string: String(decoding: value, as: UTF8.self))
+        }
+    }
+
     init(mysqlData: MySQLData) {
         guard mysqlData.buffer != nil else {
             self = .null

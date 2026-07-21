@@ -72,8 +72,10 @@ struct AlterTableView: View {
 
     private var header: some View {
         Form {
-            TextField("Tablo Adı", text: $viewModel.tableName)
-                .visibleFieldBorder()
+            LabeledContent("Tablo Adı") {
+                TextField("", text: $viewModel.tableName)
+                    .visibleFieldBorder()
+            }
             LabeledContent("Veritabanı") {
                 Text(viewModel.database)
                     .foregroundStyle(.secondary)

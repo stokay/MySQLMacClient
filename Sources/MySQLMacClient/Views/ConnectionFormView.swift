@@ -111,16 +111,37 @@ struct ConnectionFormView: View {
             Text("Yeni MySQL Bağlantısı")
                 .font(.title2.bold())
 
-            Form {
-                TextField("Bağlantı adı (opsiyonel)", text: $viewModel.name)
-                    .visibleFieldBorder()
-                TextField("Sunucu", text: $viewModel.host)
-                    .visibleFieldBorder()
-                TextField("Port", text: $viewModel.port)
-                    .visibleFieldBorder()
-                TextField("Kullanıcı adı", text: $viewModel.username)
-                    .visibleFieldBorder()
-                LabeledContent("Şifre") {
+            // Each field's on-screen name is an external label, not the
+            // `TextField`'s own title — with the border's `.plain` style, a
+            // `TextField`'s title renders as placeholder text *inside* the
+            // box; the field's own title is reserved for a real placeholder
+            // hint (shows only while the field is empty).
+            //
+            // A `Grid` rather than `Form`/`LabeledContent`: `Form` only
+            // shares one label-column width across rows for controls it
+            // recognizes natively, so with these custom bordered fields
+            // every row's label was self-sized and the borders started at
+            // different x positions. `Grid` sizes the label column to its
+            // widest cell by construction — every border's left edge lines
+            // up exactly, with no hardcoded label width to go stale.
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+                formRow("Bağlantı Adı") {
+                    TextField("Opsiyonel", text: $viewModel.name)
+                        .visibleFieldBorder()
+                }
+                formRow("Sunucu") {
+                    TextField("", text: $viewModel.host)
+                        .visibleFieldBorder()
+                }
+                formRow("Port") {
+                    TextField("", text: $viewModel.port)
+                        .visibleFieldBorder()
+                }
+                formRow("Kullanıcı Adı") {
+                    TextField("", text: $viewModel.username)
+                        .visibleFieldBorder()
+                }
+                formRow("Şifre") {
                     HStack(spacing: 10) {
                         RevealablePasswordField(text: $viewModel.password)
                         Toggle("Şifreyi sakla", isOn: $viewModel.savePassword)
@@ -128,8 +149,10 @@ struct ConnectionFormView: View {
                             .font(.callout)
                     }
                 }
-                TextField("Veritabanı (opsiyonel — boşsa tümü listelenir)", text: $viewModel.database)
-                    .visibleFieldBorder()
+                formRow("Veritabanı") {
+                    TextField("Opsiyonel — boşsa tümü listelenir", text: $viewModel.database)
+                        .visibleFieldBorder()
+                }
             }
             .padding(12)
             .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
@@ -175,6 +198,18 @@ struct ConnectionFormView: View {
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    /// One `Grid` row: right-aligned label in the shared label column,
+    /// leading-aligned (and horizontally greedy) field in the second.
+    private func formRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        GridRow {
+            Text(label)
+                .gridColumnAlignment(.trailing)
+                .lineLimit(1)
+            content()
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 

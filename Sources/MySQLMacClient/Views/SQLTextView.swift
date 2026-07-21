@@ -144,11 +144,33 @@ struct SQLTextView: NSViewRepresentable {
         textView.string = text
         context.coordinator.highlight(textView)
 
+        // Non-wrapping editor: the text container is effectively unbounded
+        // in width, so a long statement extends rightward behind its own
+        // horizontal scroller instead of wrapping onto extra lines (which
+        // ate the panel's fixed height as the window narrowed). The
+        // convenience initializer's `autoresizingMask = [.width]` is kept:
+        // the frame still grows with the clip view when the window widens
+        // (so the editor background always covers the full pane), while
+        // `isHorizontallyResizable` lets it grow further to fit long lines.
+        textView.isHorizontallyResizable = true
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.textContainer?.widthTracksTextView = false
+        textView.textContainer?.containerSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+
         let scrollView = NSScrollView()
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
         scrollView.borderType = .noBorder
-        scrollView.drawsBackground = false
+        // Painted by the scroll view (not left transparent as before):
+        // with a non-wrapping text view the frame can be narrower than the
+        // clip area, and this keeps the whole editor pane uniformly
+        // text-background-colored instead of showing a seam to its right.
+        scrollView.drawsBackground = true
+        scrollView.backgroundColor = .textBackgroundColor
 
         let rulerView = LineNumberRulerView(textView: textView, scrollView: scrollView)
         scrollView.verticalRulerView = rulerView

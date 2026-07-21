@@ -67,8 +67,10 @@ struct CreateTableView: View {
 
     private var header: some View {
         Form {
-            TextField("Tablo Adı", text: $viewModel.tableName)
-                .visibleFieldBorder()
+            LabeledContent("Tablo Adı") {
+                TextField("", text: $viewModel.tableName)
+                    .visibleFieldBorder()
+            }
             Picker("Veritabanı", selection: $viewModel.database) {
                 ForEach(schemaTree.databaseNodes) { node in
                     Text(node.info.name).tag(node.info.name)

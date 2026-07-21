@@ -6,6 +6,12 @@ struct MainWindowView: View {
 
     @StateObject private var schemaTreeViewModel: SchemaTreeViewModel
     @StateObject private var insertionBridge = SQLInsertionBridge()
+    /// One SQL console for the whole session — shared by every table's
+    /// grid and by the no-table-selected placeholder, so the editor is
+    /// always reachable even in a brand-new, still-empty database (see the
+    /// split-view/`onQueryResultCleared` wiring below for why this had to
+    /// move up from being per-table state).
+    @StateObject private var console: SQLConsoleViewModel
     @State private var selectedTable: TableInfo?
     @State private var isShowingCreateTable = false
     /// Set when the create-table sheet is opened from a table's context
@@ -17,11 +23,19 @@ struct MainWindowView: View {
     @State private var tableToAlter: TableInfo?
     @State private var contextActionError: String?
 
+    private static let minPanelHeight: CGFloat = 180
+    private static let minGridHeight: CGFloat = 150
+    @State private var queryPanelHeight: CGFloat = Self.minPanelHeight
+    @State private var dragStartHeight: CGFloat?
+
     init(session: AppSession, onDisconnect: @escaping () -> Void) {
         self.session = session
         self.onDisconnect = onDisconnect
         _schemaTreeViewModel = StateObject(
             wrappedValue: SchemaTreeViewModel(introspection: session.introspectionService)
+        )
+        _console = StateObject(
+            wrappedValue: SQLConsoleViewModel(service: session.mysqlService, introspection: session.introspectionService)
         )
     }
 
@@ -49,31 +63,35 @@ struct MainWindowView: View {
                 )
                 .navigationSplitViewColumnWidth(min: 200, ideal: 260)
             } detail: {
-                if let selectedTable {
-                    TableDataGridView(
-                        databaseName: selectedTable.database,
-                        tableName: selectedTable.name,
-                        service: session.mysqlService,
-                        introspection: session.introspectionService,
-                        insertionBridge: insertionBridge
-                    )
-                    .id(selectedTable.id)
-                } else {
-                    VStack {
-                        Image(systemName: "tablecells")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.tertiary)
-                        Text("Bir tablo seçin")
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                detailPane
             }
 
             StatusBarView(profile: session.profile, onDisconnect: onDisconnect)
         }
         .task {
             await schemaTreeViewModel.loadDatabases()
+        }
+        .onChange(of: selectedTable) { _, newValue in
+            // Keeps the console's "what schema does an unqualified table
+            // name mean" guess in sync with the sidebar, and drops the
+            // no-longer-relevant table-grid reload hookup once nothing is
+            // selected (see `SQLConsoleViewModel.onQueryResultCleared`).
+            console.currentDatabaseHint = newValue?.database
+            if newValue == nil {
+                console.onQueryResultCleared = nil
+            }
+        }
+        .onChange(of: insertionBridge.pendingText) { _, newValue in
+            guard let text = newValue else { return }
+            console.isQueryPanelVisible = true
+            console.pendingQueryInsertion = text
+            insertionBridge.pendingText = nil
+        }
+        .onChange(of: insertionBridge.pendingAppend) { _, newValue in
+            guard let text = newValue else { return }
+            console.isQueryPanelVisible = true
+            console.pendingQueryAppend = text
+            insertionBridge.pendingAppend = nil
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -187,10 +205,137 @@ struct MainWindowView: View {
         }
     }
 
+    /// The SQL console (when open) sits above whichever content follows —
+    /// a selected table's grid, or the placeholder — with a draggable
+    /// divider between them. Hoisted here (rather than living inside
+    /// `TableDataGridView`) so it's reachable with *no* table selected at
+    /// all, which is exactly the case a brand-new empty database needs:
+    /// nothing in the sidebar to select yet, but the editor still has to
+    /// be reachable to run a first `CREATE TABLE`.
+    ///
+    /// Deliberately not a `VSplitView`: `VSplitView` decides pane heights
+    /// itself when a pane first appears, and it repeatedly opened the
+    /// query panel squeezed below its content's real minimum no matter
+    /// what min/ideal frames the pane declared. Owning the height in
+    /// `@State` and applying it as an exact `.frame(height:)` makes a
+    /// squeezed first layout impossible, at the cost of hand-rolling the
+    /// divider drag.
+    private var detailPane: some View {
+        GeometryReader { geometry in
+            // Explicit `.leading` + an explicit full-width frame on the
+            // query panel: `VStack`'s default `.center` alignment let the
+            // panel drift sideways at narrow widths, sized to whichever
+            // child briefly reported the largest natural width instead of
+            // staying pinned to the leading edge.
+            VStack(alignment: .leading, spacing: 0) {
+                if console.isQueryPanelVisible {
+                    QueryPanelView(console: console)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: clampedPanelHeight(totalHeight: geometry.size.height))
+
+                    splitDivider(totalHeight: geometry.size.height)
+                }
+
+                Group {
+                    if let selectedTable {
+                        TableDataGridView(
+                            databaseName: selectedTable.database,
+                            tableName: selectedTable.name,
+                            service: session.mysqlService,
+                            introspection: session.introspectionService,
+                            console: console,
+                            insertionBridge: insertionBridge
+                        )
+                        .id(selectedTable.id)
+                    } else {
+                        emptyStatePlaceholder
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// Shown when nothing is selected in the sidebar. Still honors the
+    /// console's query results — running a `SELECT` with no table open
+    /// works exactly like it does with one open — so this isn't just a
+    /// dead end while the sidebar is empty.
+    private var emptyStatePlaceholder: some View {
+        Group {
+            if console.isShowingQueryResult {
+                QueryResultGridView(
+                    columnNames: console.queryResultColumns,
+                    rows: console.queryResultRows,
+                    primaryKeyColumns: Set(console.queryEditContext?.primaryKeyColumns ?? []),
+                    isEditable: console.isQueryResultEditable,
+                    onCommitEdit: { rowId, column, newText in
+                        Task { await console.commitQueryResultEdit(rowId: rowId, column: column, newText: newText) }
+                    },
+                    onDeleteRow: { row in
+                        Task { await console.deleteQueryResultRow(row) }
+                    }
+                )
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "tablecells")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.tertiary)
+                    Text("Bir tablo seçin")
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        console.toggleQueryPanel()
+                    } label: {
+                        Label(console.isQueryPanelVisible ? "SQL Sorgusunu Gizle" : "SQL Sorgusu Çalıştır", systemImage: "terminal")
+                    }
+                    .padding(.top, 4)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// The panel never renders below its content's real minimum, and
+    /// whatever's below (grid or placeholder) always keeps at least
+    /// `minGridHeight` — whichever way the user drags or the window
+    /// resizes.
+    private func clampedPanelHeight(totalHeight: CGFloat) -> CGFloat {
+        let maxAllowed = max(Self.minPanelHeight, totalHeight - Self.minGridHeight)
+        return min(max(queryPanelHeight, Self.minPanelHeight), maxAllowed)
+    }
+
+    private func splitDivider(totalHeight: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color(nsColor: .gridLineColor))
+            .frame(height: 5)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside {
+                    NSCursor.resizeUpDown.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if dragStartHeight == nil {
+                            dragStartHeight = clampedPanelHeight(totalHeight: totalHeight)
+                        }
+                        queryPanelHeight = (dragStartHeight ?? Self.minPanelHeight) + value.translation.height
+                    }
+                    .onEnded { _ in
+                        queryPanelHeight = clampedPanelHeight(totalHeight: totalHeight)
+                        dragStartHeight = nil
+                    }
+            )
+    }
+
     /// "SQL Sorgu Ekle" context-menu action: fetches the table's real
     /// column list, builds the statement skeleton, and routes it through
-    /// the insertion bridge. The table is selected first so the grid (and
-    /// with it the query panel that consumes the bridge) actually exists.
+    /// the insertion bridge. The table is selected first so its grid (and
+    /// the note in the header showing which table the columns came from)
+    /// is visible alongside the appended statement.
     private func insertQueryTemplate(for table: TableInfo, kind: SQLTemplate.Kind) async {
         let columns: [ColumnInfo]
         do {

@@ -1,27 +1,20 @@
 import SwiftUI
 
-/// Column set is built dynamically from the table's schema. The grid
-/// itself is `SpreadsheetGridView`, an `NSTableView` wrapper — see that
+/// One table's toolbar + grid (or İnfo report, or text view). The SQL query
+/// panel above it — and the split between the two — now lives one level up
+/// in `MainWindowView`, shared with the no-table-selected placeholder; this
+/// view only renders the *result* of that shared console's state
+/// (`console.isShowingQueryResult`) for whichever table is currently
+/// selected. Column set is built dynamically from the table's schema. The
+/// grid itself is `SpreadsheetGridView`, an `NSTableView` wrapper — see that
 /// file for why this isn't SwiftUI's native `Table`.
-///
-/// The SQL query panel (when open) sits above the grid with a draggable
-/// divider between them. This is deliberately *not* a `VSplitView`:
-/// `VSplitView` decides pane heights itself when a pane first appears, and
-/// it repeatedly opened the query panel squeezed below its content's real
-/// minimum (toolbar crushed under the window toolbar) no matter what
-/// min/ideal frames the pane declared. Owning the height in a `@State` and
-/// applying it as an exact `.frame(height:)` makes a squeezed first layout
-/// impossible, at the cost of hand-rolling the divider drag.
 struct TableDataGridView: View {
     @StateObject private var viewModel: TableDataViewModel
+    @ObservedObject var console: SQLConsoleViewModel
     @ObservedObject var insertionBridge: SQLInsertionBridge
     /// For the İnfo report's font size/color (live-updating).
     @EnvironmentObject private var settingsStore: SettingsStore
 
-    private static let minPanelHeight: CGFloat = 180
-    private static let minGridHeight: CGFloat = 150
-    @State private var queryPanelHeight: CGFloat = Self.minPanelHeight
-    @State private var dragStartHeight: CGFloat?
     /// Grid (default) vs. mysql-CLI-style aligned text rendering of the
     /// same rows — toggled by the two leftmost toolbar buttons.
     @State private var isTextViewMode = false
@@ -31,6 +24,7 @@ struct TableDataGridView: View {
         tableName: String,
         service: MySQLService,
         introspection: SchemaIntrospectionService,
+        console: SQLConsoleViewModel,
         insertionBridge: SQLInsertionBridge
     ) {
         _viewModel = StateObject(wrappedValue: TableDataViewModel(
@@ -39,103 +33,21 @@ struct TableDataGridView: View {
             service: service,
             introspection: introspection
         ))
+        self.console = console
         self.insertionBridge = insertionBridge
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            VStack(spacing: 0) {
-                if viewModel.isQueryPanelVisible {
-                    QueryPanelView(viewModel: viewModel)
-                        .frame(height: clampedPanelHeight(totalHeight: geometry.size.height))
-
-                    splitDivider(totalHeight: geometry.size.height)
-                }
-
-                gridPane
-                    .frame(maxHeight: .infinity)
-            }
-        }
-        .task(id: viewModel.tableName) {
-            await viewModel.load()
-        }
-        .navigationTitle(viewModel.tableName)
-        .onChange(of: insertionBridge.pendingText) { _, newValue in
-            guard let text = newValue else { return }
-            viewModel.isQueryPanelVisible = true
-            viewModel.pendingQueryInsertion = text
-            insertionBridge.pendingText = nil
-        }
-        .onChange(of: insertionBridge.pendingAppend) { _, newValue in
-            guard let text = newValue else { return }
-            viewModel.isQueryPanelVisible = true
-            viewModel.pendingQueryAppend = text
-            insertionBridge.pendingAppend = nil
-        }
-        // `.onChange` only fires on *changes after* this view exists — when
-        // the context menu selects a table whose grid wasn't open yet, the
-        // bridge is written before this view is created, so the value must
-        // also be consumed once at appearance.
-        .onAppear {
-            if let text = insertionBridge.pendingAppend {
-                viewModel.isQueryPanelVisible = true
-                viewModel.pendingQueryAppend = text
-                insertionBridge.pendingAppend = nil
-            }
-            if insertionBridge.pendingShowInfo {
-                insertionBridge.pendingShowInfo = false
-                Task { await viewModel.showTableInfo() }
-            }
-        }
-        .onChange(of: insertionBridge.pendingShowInfo) { _, newValue in
-            guard newValue else { return }
-            insertionBridge.pendingShowInfo = false
-            Task { await viewModel.showTableInfo() }
-        }
-    }
-
-    /// The panel never renders below its content's real minimum, and the
-    /// grid always keeps at least `minGridHeight` — whichever way the user
-    /// drags or the window resizes.
-    private func clampedPanelHeight(totalHeight: CGFloat) -> CGFloat {
-        let maxAllowed = max(Self.minPanelHeight, totalHeight - Self.minGridHeight)
-        return min(max(queryPanelHeight, Self.minPanelHeight), maxAllowed)
-    }
-
-    private func splitDivider(totalHeight: CGFloat) -> some View {
-        Rectangle()
-            .fill(Color(nsColor: .gridLineColor))
-            .frame(height: 5)
-            .contentShape(Rectangle())
-            .onHover { inside in
-                if inside {
-                    NSCursor.resizeUpDown.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1)
-                    .onChanged { value in
-                        if dragStartHeight == nil {
-                            dragStartHeight = clampedPanelHeight(totalHeight: totalHeight)
-                        }
-                        queryPanelHeight = (dragStartHeight ?? Self.minPanelHeight) + value.translation.height
-                    }
-                    .onEnded { _ in
-                        queryPanelHeight = clampedPanelHeight(totalHeight: totalHeight)
-                        dragStartHeight = nil
-                    }
-            )
-    }
-
-    private var gridPane: some View {
-        VStack(spacing: 0) {
+        // Explicit `.leading`: `VStack`'s default `.center` alignment let
+        // this whole column reposition sideways whenever a child's natural
+        // width (esp. the toolbar's, before the fix above) briefly won or
+        // lost the "widest child" comparison as the window resized.
+        VStack(alignment: .leading, spacing: 0) {
             gridToolbar
 
             Divider()
 
-            if !viewModel.hasPrimaryKey && !viewModel.isLoading && !viewModel.isShowingQueryResult && viewModel.tableInfoText == nil {
+            if !viewModel.hasPrimaryKey && !viewModel.isLoading && !console.isShowingQueryResult && viewModel.tableInfoText == nil {
                 Label("Bu tabloda primary key yok, düzenleme kapalı.", systemImage: "exclamationmark.triangle.fill")
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -165,49 +77,48 @@ struct TableDataGridView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if isTextViewMode {
                 textualRowsView
-            } else if viewModel.isShowingQueryResult {
+            } else if console.isShowingQueryResult {
                 QueryResultGridView(
-                    columnNames: viewModel.queryResultColumns,
-                    rows: viewModel.queryResultRows,
-                    primaryKeyColumns: Set(viewModel.queryEditContext?.primaryKeyColumns ?? []),
-                    isEditable: viewModel.isQueryResultEditable,
+                    columnNames: console.queryResultColumns,
+                    rows: console.queryResultRows,
+                    primaryKeyColumns: Set(console.queryEditContext?.primaryKeyColumns ?? []),
+                    isEditable: console.isQueryResultEditable,
                     onCommitEdit: { rowId, column, newText in
-                        Task { await viewModel.commitQueryResultEdit(rowId: rowId, column: column, newText: newText) }
+                        Task { await console.commitQueryResultEdit(rowId: rowId, column: column, newText: newText) }
                     },
                     onDeleteRow: { row in
-                        Task { await viewModel.deleteQueryResultRow(row) }
+                        Task { await console.deleteQueryResultRow(row) }
                     }
                 )
             } else {
                 SpreadsheetGridView(viewModel: viewModel)
             }
         }
-    }
-
-    private var gridToolbar: some View {
-        HStack(spacing: 8) {
-            if viewModel.tableInfoText != nil {
-                // Info report mode: the whole toolbar reduces to the way
-                // back — the report is read-only, so the edit/refresh/query
-                // controls would all be dead weight next to it.
-                Button {
-                    viewModel.tableInfoText = nil
-                } label: {
-                    Label("Tablo Görünümüne Dön", systemImage: "tablecells")
-                }
-
-                Text("İnfo — \(viewModel.tableName)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-            } else {
-                regularToolbarContent
+        .task(id: viewModel.tableName) {
+            await viewModel.load()
+        }
+        .navigationTitle(viewModel.tableName)
+        .onAppear {
+            // This table is now the one "Tablo Görünümüne Dön" should
+            // refresh. Capturing `viewModel` strongly is fine, not a
+            // leak: this view (and closure) is recreated on every table
+            // selection change, and each `.onAppear` simply *replaces*
+            // `console.onQueryResultCleared`, releasing the previous
+            // table's reference at that point.
+            let capturedViewModel = viewModel
+            console.onQueryResultCleared = {
+                await capturedViewModel.reload()
+            }
+            if insertionBridge.pendingShowInfo {
+                insertionBridge.pendingShowInfo = false
+                Task { await viewModel.showTableInfo() }
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .onChange(of: insertionBridge.pendingShowInfo) { _, newValue in
+            guard newValue else { return }
+            insertionBridge.pendingShowInfo = false
+            Task { await viewModel.showTableInfo() }
+        }
     }
 
     /// The current rows (main table or query result — whichever is on
@@ -216,9 +127,9 @@ struct TableDataGridView: View {
     private var textualRowsView: some View {
         let headers: [String]
         let rows: [[String]]
-        if viewModel.isShowingQueryResult {
-            headers = viewModel.queryResultColumns
-            rows = viewModel.queryResultRows.map { row in headers.map { row.editedText[$0] ?? "" } }
+        if console.isShowingQueryResult {
+            headers = console.queryResultColumns
+            rows = console.queryResultRows.map { row in headers.map { row.editedText[$0] ?? "" } }
         } else {
             headers = viewModel.columns.map(\.name)
             rows = viewModel.rows.map { row in headers.map { row.editedText[$0] ?? "" } }
@@ -232,6 +143,45 @@ struct TableDataGridView: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    /// Horizontally scrollable rather than a plain `HStack`: at narrow
+    /// window widths, an `HStack` this dense (view-mode toggle, SQL/Yenile/
+    /// Satır Ekle buttons, the whole pagination+filter row) has nowhere to
+    /// shrink to — SwiftUI compresses the `Text`/`Label` children instead,
+    /// which wrap onto a second line and grow the toolbar's height, and
+    /// the still-too-wide row then gets center-repositioned by the parent
+    /// `VStack` instead of staying pinned left. Scrolling sidesteps both:
+    /// content is proposed effectively unbounded width (nothing wraps) and
+    /// stays anchored to the leading edge (nothing recenters).
+    private var gridToolbar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if viewModel.tableInfoText != nil {
+                    // Info report mode: the whole toolbar reduces to the way
+                    // back — the report is read-only, so the edit/refresh/query
+                    // controls would all be dead weight next to it.
+                    Button {
+                        viewModel.tableInfoText = nil
+                    } label: {
+                        Label("Tablo Görünümüne Dön", systemImage: "tablecells")
+                            .lineLimit(1)
+                    }
+
+                    Text("İnfo — \(viewModel.tableName)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                } else {
+                    regularToolbarContent
+                }
+            }
+            .fixedSize()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     private func viewModeButton(icon: String, fallbackSystemImage: String, help: String, isActive: Bool, action: @escaping () -> Void) -> some View {
@@ -274,31 +224,32 @@ struct TableDataGridView: View {
             Divider().frame(height: 16)
 
             Button {
-                viewModel.toggleQueryPanel()
+                console.toggleQueryPanel(defaultTable: (viewModel.databaseName, viewModel.tableName))
             } label: {
                 Label("SQL Sorgusu", systemImage: "terminal")
+                    .lineLimit(1)
             }
 
-            if !viewModel.isShowingQueryResult {
+            if !console.isShowingQueryResult {
                 Divider().frame(height: 16)
 
                 Button {
                     Task { await viewModel.reload() }
                 } label: {
                     Label("Yenile", systemImage: "arrow.clockwise")
+                        .lineLimit(1)
                 }
                 Button {
                     Task { await viewModel.insertBlankRow() }
                 } label: {
                     Label("Satır Ekle", systemImage: "plus")
+                        .lineLimit(1)
                 }
                 .disabled(!viewModel.hasPrimaryKey)
 
                 Divider().frame(height: 16)
 
                 PaginationControlView(viewModel: viewModel)
-            } else {
-                Spacer()
             }
         }
     }

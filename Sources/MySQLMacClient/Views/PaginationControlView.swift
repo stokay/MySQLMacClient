@@ -25,6 +25,7 @@ struct PaginationControlView: View {
     var body: some View {
         HStack(spacing: 12) {
             Text("Sayfa boyutu:")
+                .lineLimit(1)
             TextField("", text: pageSizeBinding)
                 .frame(width: 60)
                 .onSubmit {
@@ -43,6 +44,7 @@ struct PaginationControlView: View {
             Text(rangeDescription)
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
 
             Button {
                 Task { await viewModel.nextPage() }

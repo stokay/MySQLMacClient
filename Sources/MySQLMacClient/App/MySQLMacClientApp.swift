@@ -1,13 +1,19 @@
 import SwiftUI
 import AppKit
 
-/// Manages app lifecycle. When running as a proper .app bundle (App Store build)
-/// activation policy is handled by the bundle's Info.plist automatically.
-/// applicationDidBecomeActive still handles the window-focus edge case.
+/// Manages app lifecycle. A proper .app bundle (Xcode/App Store build) gets
+/// its activation policy from Info.plist; a bare SPM executable
+/// (`swift run`) does NOT — without the manual activation below its window
+/// draws and takes clicks, but keyboard focus stays with whatever app was
+/// frontmost before launch (e.g. the IDE) and every keystroke leaks there.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // No manual activation needed for a bundled .app — Info.plist handles it.
-        // (Previously needed for bare SPM executable builds.)
+        // Bundle check keeps this a no-op for the .app builds while
+        // restoring keyboard input for `swift run` development builds.
+        if Bundle.main.bundleURL.pathExtension != "app" {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
