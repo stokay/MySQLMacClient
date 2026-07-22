@@ -47,6 +47,10 @@ struct SettingsView: View {
             sizeStepper("Yazı boyutu", value: $settingsStore.settings.sidebar.fontSize, range: 10...20)
             sizeStepper("Satır aralığı", value: $settingsStore.settings.sidebar.rowVerticalPadding, range: 0...12)
 
+            Divider().padding(.vertical, 4)
+
+            adaptiveColorRow("Yazı rengi", \.sidebar.textColor)
+
             resetSection
         }
         .padding(16)
@@ -71,6 +75,7 @@ struct SettingsView: View {
             adaptiveColorRow("Başlık zemin rengi", \.grid.headerBackground)
             adaptiveColorRow("Başlık yazı rengi", \.grid.headerText)
             adaptiveColorRow("Izgara çizgi rengi", \.grid.gridLine)
+            adaptiveColorRow("Hücre yazı rengi", \.grid.cellTextColor)
             adaptiveColorRow("Seçili satır zemin rengi", \.grid.selectedRowBackground)
             adaptiveColorRow("Seçili satır yazı rengi", \.grid.selectedRowText)
 

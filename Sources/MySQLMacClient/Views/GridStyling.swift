@@ -95,6 +95,9 @@ final class SelectedColorRowView: NSTableRowView {
         \.grid.selectedRowText,
         fallback: NSColor(red: 0x22 / 255, green: 0x1a / 255, blue: 0x14 / 255, alpha: 1)
     )
+    /// Unselected-row cell text — used to be a hardcoded `.labelColor` with
+    /// no Settings knob.
+    static let cellTextColor = NSColor.settingsColor(\.grid.cellTextColor, fallback: .labelColor)
 
     override var isSelected: Bool {
         didSet {
@@ -113,7 +116,7 @@ final class SelectedColorRowView: NSTableRowView {
             for subview in cellContainer.subviews {
                 guard let textField = subview as? NSTextField else { continue }
                 (textField.cell as? NSTextFieldCell)?.backgroundStyle = .normal
-                textField.textColor = isSelected ? Self.selectedTextColor : .labelColor
+                textField.textColor = isSelected ? Self.selectedTextColor : Self.cellTextColor
             }
         }
     }
@@ -127,7 +130,7 @@ final class SelectedColorRowView: NSTableRowView {
 @MainActor
 func applyGridTextColor(to textField: NSTextField, isSelected: Bool) {
     (textField.cell as? NSTextFieldCell)?.backgroundStyle = .normal
-    textField.textColor = isSelected ? SelectedColorRowView.selectedTextColor : .labelColor
+    textField.textColor = isSelected ? SelectedColorRowView.selectedTextColor : SelectedColorRowView.cellTextColor
 }
 
 /// A plain `NSView`, not `NSTableCellView` — `NSTableCellView` has its own

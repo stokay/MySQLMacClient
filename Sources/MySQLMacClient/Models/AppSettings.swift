@@ -44,6 +44,9 @@ struct AppSettings: Codable, Equatable {
         var gridLine = AdaptiveColorSetting(light: "#c5c5c5", dark: "#484848")
         var selectedRowBackground = AdaptiveColorSetting(light: "#dcdcdc", dark: "#555555")
         var selectedRowText = AdaptiveColorSetting(light: "#221a14", dark: "#f5f0e8")
+        /// Unselected-row cell text — previously hardcoded to `.labelColor`
+        /// with no Settings knob at all.
+        var cellTextColor = AdaptiveColorSetting(light: "#000000", dark: "#ffffff")
 
         init() {}
         init(from decoder: Decoder) throws {
@@ -58,6 +61,7 @@ struct AppSettings: Codable, Equatable {
             gridLine = try container.decodeIfPresent(AdaptiveColorSetting.self, forKey: .gridLine) ?? defaults.gridLine
             selectedRowBackground = try container.decodeIfPresent(AdaptiveColorSetting.self, forKey: .selectedRowBackground) ?? defaults.selectedRowBackground
             selectedRowText = try container.decodeIfPresent(AdaptiveColorSetting.self, forKey: .selectedRowText) ?? defaults.selectedRowText
+            cellTextColor = try container.decodeIfPresent(AdaptiveColorSetting.self, forKey: .cellTextColor) ?? defaults.cellTextColor
         }
     }
 
@@ -111,6 +115,9 @@ struct AppSettings: Codable, Equatable {
         var fontSize: Double = 13
         /// Vertical padding per row — the "satır aralığı" knob.
         var rowVerticalPadding: Double = 4
+        /// Unselected-row text — previously hardcoded to `Color.primary`
+        /// with no Settings knob, same gap the grid's `cellTextColor` fixed.
+        var textColor = AdaptiveColorSetting(light: "#000000", dark: "#ffffff")
 
         init() {}
         init(from decoder: Decoder) throws {
@@ -118,6 +125,7 @@ struct AppSettings: Codable, Equatable {
             let defaults = Sidebar()
             fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? defaults.fontSize
             rowVerticalPadding = try container.decodeIfPresent(Double.self, forKey: .rowVerticalPadding) ?? defaults.rowVerticalPadding
+            textColor = try container.decodeIfPresent(AdaptiveColorSetting.self, forKey: .textColor) ?? defaults.textColor
         }
     }
 

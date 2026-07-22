@@ -1,5 +1,49 @@
 import SwiftUI
 
+/// One "Oluştur ▸ <kind>..." request that only needs a name — drives the
+/// shared `CreateNamedSchemaObjectView` sheet. Add a case here (plus one
+/// arm in `MainWindowView`'s sheet closure) for each new kind instead of a
+/// new `@State` pair.
+private struct NamedObjectCreationRequest: Identifiable {
+    enum Kind {
+        case view, storedProcedure, function, trigger, event
+
+        var title: String {
+            switch self {
+            case .view: return "Yeni View"
+            case .storedProcedure: return "Yeni Stored Procedure"
+            case .function: return "Yeni Function"
+            case .trigger: return "Yeni Trigger"
+            case .event: return "Yeni Event"
+            }
+        }
+
+        var nameFieldLabel: String {
+            switch self {
+            case .view: return "View Adı"
+            case .storedProcedure: return "Stored Procedure Adı"
+            case .function: return "Function Adı"
+            case .trigger: return "Trigger Adı"
+            case .event: return "Event Adı"
+            }
+        }
+
+        func sql(database: String, name: String) -> String {
+            switch self {
+            case .view: return SQLTemplate.createView(database: database, name: name)
+            case .storedProcedure: return SQLTemplate.createStoredProcedure(database: database, name: name)
+            case .function: return SQLTemplate.createFunction(database: database, name: name)
+            case .trigger: return SQLTemplate.createTrigger(database: database, name: name)
+            case .event: return SQLTemplate.createEvent(database: database, name: name)
+            }
+        }
+    }
+
+    let id = UUID()
+    let kind: Kind
+    let database: String
+}
+
 struct MainWindowView: View {
     let session: AppSession
     let onDisconnect: () -> Void
@@ -18,6 +62,11 @@ struct MainWindowView: View {
     /// menu, so the form pre-selects that table's database instead of the
     /// currently selected one.
     @State private var createTableDefaultDatabase: String?
+    /// Drives the single generic "ask for a name" sheet shared by every
+    /// "Oluştur ▸ <kind>..." menu item that's just a name prompt (View,
+    /// Stored Procedure, Function so far) — one `@State` instead of a
+    /// growing set of `isShowingCreateX`/`createXDatabase` pairs.
+    @State private var namedObjectCreationRequest: NamedObjectCreationRequest?
     @State private var tablePendingTruncate: TableInfo?
     @State private var tablePendingDrop: TableInfo?
     @State private var tableToAlter: TableInfo?
@@ -49,6 +98,21 @@ struct MainWindowView: View {
                     onCreateTable: { database in
                         createTableDefaultDatabase = database
                         isShowingCreateTable = true
+                    },
+                    onCreateView: { database in
+                        namedObjectCreationRequest = NamedObjectCreationRequest(kind: .view, database: database)
+                    },
+                    onCreateStoredProcedure: { database in
+                        namedObjectCreationRequest = NamedObjectCreationRequest(kind: .storedProcedure, database: database)
+                    },
+                    onCreateFunction: { database in
+                        namedObjectCreationRequest = NamedObjectCreationRequest(kind: .function, database: database)
+                    },
+                    onCreateTrigger: { database in
+                        namedObjectCreationRequest = NamedObjectCreationRequest(kind: .trigger, database: database)
+                    },
+                    onCreateEvent: { database in
+                        namedObjectCreationRequest = NamedObjectCreationRequest(kind: .event, database: database)
                     },
                     onTruncateTable: { tablePendingTruncate = $0 },
                     onDropTable: { tablePendingDrop = $0 },
@@ -139,6 +203,16 @@ struct MainWindowView: View {
                     }
                     selectedTable = createdTable
                 }
+            }
+        }
+        .sheet(item: $namedObjectCreationRequest) { request in
+            CreateNamedSchemaObjectView(
+                title: request.kind.title,
+                nameFieldLabel: request.kind.nameFieldLabel,
+                database: request.database
+            ) { name in
+                console.isQueryPanelVisible = true
+                console.pendingQueryAppend = request.kind.sql(database: request.database, name: name)
             }
         }
         .sheet(item: $tableToAlter) { table in

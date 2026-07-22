@@ -28,6 +28,47 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.settings.sidebar.rowVerticalPadding, 4)
         XCTAssertEqual(store.settings.editor.statusFontSize, 13)
         XCTAssertEqual(store.settings.info.fontSize, 12)
+        XCTAssertEqual(store.settings.grid.cellTextColor.light, "#000000")
+        XCTAssertEqual(store.settings.grid.cellTextColor.dark, "#ffffff")
+        XCTAssertEqual(store.settings.sidebar.textColor.light, "#000000")
+        XCTAssertEqual(store.settings.sidebar.textColor.dark, "#ffffff")
+    }
+
+    func testSidebarTextColorPersists() {
+        let store = SettingsStore(fileURL: tempFileURL)
+        store.settings.sidebar.textColor.light = "#654321"
+        store.settings.sidebar.textColor.dark = "#fedcba"
+
+        let reloaded = SettingsStore(fileURL: tempFileURL)
+        XCTAssertEqual(reloaded.settings.sidebar.textColor.light, "#654321")
+        XCTAssertEqual(reloaded.settings.sidebar.textColor.dark, "#fedcba")
+    }
+
+    func testSidebarTextColorFallsBackToDefaultWhenMissingFromOldSettingsFile() throws {
+        try Data(#"{"sidebar": {"fontSize": 16}}"#.utf8).write(to: tempFileURL)
+
+        let store = SettingsStore(fileURL: tempFileURL)
+        XCTAssertEqual(store.settings.sidebar.fontSize, 16)
+        XCTAssertEqual(store.settings.sidebar.textColor, AppSettings.Sidebar().textColor)
+    }
+
+    func testCellTextColorPersists() {
+        let store = SettingsStore(fileURL: tempFileURL)
+        store.settings.grid.cellTextColor.light = "#123456"
+        store.settings.grid.cellTextColor.dark = "#abcdef"
+
+        let reloaded = SettingsStore(fileURL: tempFileURL)
+        XCTAssertEqual(reloaded.settings.grid.cellTextColor.light, "#123456")
+        XCTAssertEqual(reloaded.settings.grid.cellTextColor.dark, "#abcdef")
+    }
+
+    func testCellTextColorFallsBackToDefaultWhenMissingFromOldSettingsFile() throws {
+        // Simulates a settings.json written before `cellTextColor` existed.
+        try Data(#"{"grid": {"rowHeight": 24}}"#.utf8).write(to: tempFileURL)
+
+        let store = SettingsStore(fileURL: tempFileURL)
+        XCTAssertEqual(store.settings.grid.rowHeight, 24)
+        XCTAssertEqual(store.settings.grid.cellTextColor, AppSettings.Grid().cellTextColor)
     }
 
     func testInfoSettingsPersist() {

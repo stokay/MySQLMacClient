@@ -18,6 +18,11 @@ struct TableListView: View {
     /// Context-menu actions on a table row — owned by `MainWindowView`,
     /// which has the session/sheet/confirmation state they need.
     let onCreateTable: (String) -> Void
+    let onCreateView: (String) -> Void
+    let onCreateStoredProcedure: (String) -> Void
+    let onCreateFunction: (String) -> Void
+    let onCreateTrigger: (String) -> Void
+    let onCreateEvent: (String) -> Void
     let onTruncateTable: (TableInfo) -> Void
     let onDropTable: (TableInfo) -> Void
     let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
@@ -46,6 +51,11 @@ struct TableListView: View {
                                 selectedTable: $selectedTable,
                                 insertionBridge: insertionBridge,
                                 onCreateTable: onCreateTable,
+                                onCreateView: onCreateView,
+                                onCreateStoredProcedure: onCreateStoredProcedure,
+                                onCreateFunction: onCreateFunction,
+                                onCreateTrigger: onCreateTrigger,
+                                onCreateEvent: onCreateEvent,
                                 onTruncateTable: onTruncateTable,
                                 onDropTable: onDropTable,
                                 onInsertQueryTemplate: onInsertQueryTemplate,
@@ -94,6 +104,12 @@ private struct RowHeader: View {
     var body: some View {
         let fontSize = CGFloat(settingsStore.settings.sidebar.fontSize)
         let verticalPadding = CGFloat(settingsStore.settings.sidebar.rowVerticalPadding)
+        // Recomputed on every render (mirrors `QueryPanelView.statusRow`'s
+        // pattern): `settingsColor` returns a fresh appearance-aware
+        // `NSColor` each call, so wrapping it in `Color` here always
+        // reflects the *current* theme rather than one captured at first
+        // draw.
+        let textColor = Color(nsColor: .settingsColor({ $0.sidebar.textColor }, fallback: .labelColor))
 
         HStack(spacing: 5) {
             Group {
@@ -133,7 +149,7 @@ private struct RowHeader: View {
         .padding(.vertical, verticalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(isSelected ? Color.accentColor.opacity(0.85) : Color.clear)
-        .foregroundStyle(isSelected ? Color.white : Color.primary)
+        .foregroundStyle(isSelected ? Color.white : textColor)
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onDoubleClick?() }
@@ -205,6 +221,11 @@ private struct DatabaseRow: View {
     @Binding var selectedTable: TableInfo?
     let insertionBridge: SQLInsertionBridge
     let onCreateTable: (String) -> Void
+    let onCreateView: (String) -> Void
+    let onCreateStoredProcedure: (String) -> Void
+    let onCreateFunction: (String) -> Void
+    let onCreateTrigger: (String) -> Void
+    let onCreateEvent: (String) -> Void
     let onTruncateTable: (TableInfo) -> Void
     let onDropTable: (TableInfo) -> Void
     let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
@@ -224,6 +245,9 @@ private struct DatabaseRow: View {
                 onToggle: toggle,
                 onSelect: toggle
             )
+            .contextMenu {
+                databaseContextMenu
+            }
 
             if isExpanded {
                 CategoryRow(
@@ -242,7 +266,6 @@ private struct DatabaseRow: View {
                         selectedTable: $selectedTable,
                         indent: 28,
                         insertionBridge: insertionBridge,
-                        onCreateTable: onCreateTable,
                         onTruncateTable: onTruncateTable,
                         onDropTable: onDropTable,
                         onInsertQueryTemplate: onInsertQueryTemplate,
@@ -267,7 +290,6 @@ private struct DatabaseRow: View {
                         selectedTable: $selectedTable,
                         indent: 28,
                         insertionBridge: insertionBridge,
-                        onCreateTable: onCreateTable,
                         onTruncateTable: onTruncateTable,
                         onDropTable: onDropTable,
                         onInsertQueryTemplate: onInsertQueryTemplate,
@@ -282,6 +304,30 @@ private struct DatabaseRow: View {
     private func toggle() {
         withAnimation(.easeInOut(duration: 0.12)) { isExpanded.toggle() }
     }
+
+    @ViewBuilder
+    private var databaseContextMenu: some View {
+        Menu("Oluştur") {
+            Button("Tablo...") {
+                onCreateTable(node.info.name)
+            }
+            Button("View...") {
+                onCreateView(node.info.name)
+            }
+            Button("Stored Procedure...") {
+                onCreateStoredProcedure(node.info.name)
+            }
+            Button("Function...") {
+                onCreateFunction(node.info.name)
+            }
+            Button("Trigger...") {
+                onCreateTrigger(node.info.name)
+            }
+            Button("Event...") {
+                onCreateEvent(node.info.name)
+            }
+        }
+    }
 }
 
 private struct TableTreeRow: View {
@@ -289,7 +335,6 @@ private struct TableTreeRow: View {
     @Binding var selectedTable: TableInfo?
     let indent: CGFloat
     let insertionBridge: SQLInsertionBridge
-    let onCreateTable: (String) -> Void
     let onTruncateTable: (TableInfo) -> Void
     let onDropTable: (TableInfo) -> Void
     let onInsertQueryTemplate: (TableInfo, SQLTemplate.Kind) -> Void
@@ -374,10 +419,6 @@ private struct TableTreeRow: View {
             Button("SELECT") {
                 onInsertQueryTemplate(node.info, .select)
             }
-        }
-
-        Button("Yeni Tablo Oluştur") {
-            onCreateTable(node.info.database)
         }
 
         Button("Alter Table") {
